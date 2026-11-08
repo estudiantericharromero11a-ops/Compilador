@@ -1,0 +1,17 @@
+# Lectura local de cuatro switches y display de siete segmentos
+INICIAR
+
+BOTONES 13 12 14 27 COMO switches
+DISPLAY7 15 2 4 5 18 19 21 ACTIVO_BAJO COMO display
+
+REPETIR_SIEMPRE
+    LEER_BINARIO switches COMO numero
+    SI numero <= 9
+        MOSTRAR numero EN display
+    SINO
+        LIMPIAR display
+    FIN_SI
+    ESPERAR 50
+FIN_REPETIR_SIEMPRE
+
+FINALIZAR

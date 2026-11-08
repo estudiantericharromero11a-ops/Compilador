@@ -1,0 +1,11 @@
+# Parpadea el LED integrado (GPIO 2 en muchas placas ESP32)
+INICIAR
+
+REPETIR 5
+    LED 2 ENCENDER
+    ESPERAR 500
+    LED 2 APAGAR
+    ESPERAR 500
+FIN_REPETIR
+
+FINALIZAR
