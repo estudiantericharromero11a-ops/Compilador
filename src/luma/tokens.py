@@ -18,6 +18,9 @@ class TokenKind(Enum):
     BUTTONS = auto()
     AS = auto()
     DISPLAY7 = auto()
+    SERVO = auto()
+    MOVE = auto()
+    ANGLE = auto()
     ACTIVE_LOW = auto()
     READ_BINARY = auto()
     IF = auto()
@@ -47,6 +50,9 @@ KEYWORDS = {
     "BOTONES": TokenKind.BUTTONS,
     "COMO": TokenKind.AS,
     "DISPLAY7": TokenKind.DISPLAY7,
+    "SERVOMOTOR": TokenKind.SERVO,
+    "MOVER": TokenKind.MOVE,
+    "ANGULO": TokenKind.ANGLE,
     "ACTIVO_BAJO": TokenKind.ACTIVE_LOW,
     "LEER_BINARIO": TokenKind.READ_BINARY,
     "SI": TokenKind.IF,

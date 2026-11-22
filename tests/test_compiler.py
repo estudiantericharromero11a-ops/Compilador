@@ -1,10 +1,13 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from luma.ast import LedStatement, RepeatStatement, WaitStatement
-from luma.compiler import compile_source
+from luma.compiler import compile_source, write_wokwi_main, write_wokwi_sketch
 from luma.errors import LumaError
 from luma.lexer import Lexer
 from luma.tokens import TokenKind
+from luma.wokwi_browser import WokwiBrowserError, _select_wokwi_window, _wokwi_coordinates
 
 
 SAMPLE = """INICIAR
@@ -79,7 +82,7 @@ class ParserTests(unittest.TestCase):
 
 
 class SemanticTests(unittest.TestCase):
-    def test_rejects_input_only_gpio(self):
+    def test_rejects_input_only_gpio_on_esp32(self):
         with self.assertRaisesRegex(LumaError, "no disponible como salida"):
             compile_source("INICIAR\nLED 34 ENCENDER\nFINALIZAR")
 
@@ -91,8 +94,69 @@ class SemanticTests(unittest.TestCase):
         with self.assertRaisesRegex(LumaError, "entre 1 y 10000"):
             compile_source("INICIAR\nREPETIR 0\nFIN_REPETIR\nFINALIZAR")
 
+    def test_rejects_servo_angle_outside_supported_range(self):
+        source = "INICIAR\nSERVOMOTOR 18 COMO puerta\nMOVER puerta ANGULO 181\nFINALIZAR"
+        with self.assertRaisesRegex(LumaError, "entre 0 y 180 grados"):
+            compile_source(source)
+
+    def test_rejects_servo_pin_conflicts(self):
+        source = (
+            "INICIAR\n"
+            "SERVOMOTOR 18 COMO puerta\n"
+            "LED 18 ENCENDER\n"
+            "FINALIZAR"
+        )
+        with self.assertRaisesRegex(LumaError, "ya está ocupado"):
+            compile_source(source)
+
+    def test_validates_arduino_mega_pin_range(self):
+        source = (
+            "INICIAR\n"
+            "SERVOMOTOR 9 COMO puerta\n"
+            "BOTONES 2 3 12 13 ACTIVO_BAJO COMO controles\n"
+            "LED 6 ENCENDER\n"
+            "LED 7 APAGAR\n"
+            "FINALIZAR"
+        )
+        result = compile_source(source, board="arduino-mega")
+        self.assertIn("pinMode(6, OUTPUT);", result.generated_arduino)
+        with self.assertRaisesRegex(LumaError, "Arduino Mega"):
+            compile_source("INICIAR\nLED 70 ENCENDER\nFINALIZAR", board="arduino-mega")
+
 
 class CodeGenerationTests(unittest.TestCase):
+    def test_compiles_led_presentation_example(self):
+        source = Path("examples/presentacion_leds.luma").read_text(encoding="utf-8")
+        code = compile_source(source).generated_code
+        compile(code, "<generated MicroPython>", "exec")
+        self.assertIn("while True:", code)
+        self.assertIn("Pin(32, Pin.IN, Pin.PULL_DOWN)", code)
+        self.assertIn("if luma_value_habilitado == 8:", code)
+        for pin in (13, 14, 18, 19, 21, 22, 23):
+            self.assertIn(f"luma_pin_{pin} = Pin({pin}, Pin.OUT)", code)
+
+    def test_compiles_servo_door_example_for_both_backends(self):
+        source = Path("examples/servo_door.luma").read_text(encoding="utf-8")
+        result = compile_source(source, board="arduino-mega")
+        compile(result.generated_code, "<generated MicroPython>", "exec")
+        self.assertIn("Pin(2, Pin.IN, Pin.PULL_UP)", result.generated_code)
+        self.assertIn("(1 - luma_buttons_controles[0].value())", result.generated_code)
+        self.assertIn("luma_servo_set_angle(luma_servo_puerta, 0)", result.generated_code)
+        self.assertIn("luma_servo_set_angle(luma_servo_puerta, 90)", result.generated_code)
+        self.assertIn("#include <Servo.h>", result.generated_arduino)
+        self.assertIn("Servo luma_servo_puerta;", result.generated_arduino)
+        self.assertIn("pinMode(2, INPUT_PULLUP);", result.generated_arduino)
+        self.assertIn("(digitalRead(2) == LOW)", result.generated_arduino)
+        self.assertIn("luma_servo_puerta.attach(9);", result.generated_arduino)
+        self.assertIn("luma_servo_puerta.write(0);", result.generated_arduino)
+        self.assertIn("luma_servo_puerta.write(90);", result.generated_arduino)
+        self.assertIn("if (luma_value_estado >= 8)", result.generated_arduino)
+        self.assertIn("digitalWrite(6, HIGH);", result.generated_arduino)
+        self.assertIn("digitalWrite(7, LOW);", result.generated_arduino)
+        self.assertIn(".extern luma_servo_set_angle", result.generated_assembly)
+        self.assertIn("call0 luma_servo_setup", result.generated_assembly)
+        self.assertIn("call0 luma_servo_set_angle", result.generated_assembly)
+
     def test_generates_micro_python_with_pin_setup_and_loop(self):
         code = compile_source(SAMPLE).generated_code
         compile(code, "<generated MicroPython>", "exec")
@@ -165,6 +229,96 @@ class CodeGenerationTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(LumaError, "ya está ocupado"):
             compile_source(source)
+
+    def test_exports_generated_code_to_wokwi_project(self):
+        with TemporaryDirectory() as project_dir:
+            directory = Path(project_dir)
+            (directory / "diagram.json").write_text("{}", encoding="utf-8")
+
+            output_path = write_wokwi_main("print('Wokwi')\n", directory)
+
+            self.assertEqual(output_path, directory / "main.py")
+            self.assertEqual(output_path.read_text(encoding="utf-8"), "print('Wokwi')\n")
+
+    def test_wokwi_export_requires_project_diagram(self):
+        with TemporaryDirectory() as project_dir:
+            with self.assertRaisesRegex(ValueError, "diagram.json"):
+                write_wokwi_main("print('Wokwi')\n", project_dir)
+
+    def test_wokwi_export_requires_confirmation_to_replace_main(self):
+        with TemporaryDirectory() as project_dir:
+            directory = Path(project_dir)
+            (directory / "diagram.json").write_text("{}", encoding="utf-8")
+            main_path = directory / "main.py"
+            main_path.write_text("original code\n", encoding="utf-8")
+
+            with self.assertRaises(FileExistsError):
+                write_wokwi_main("generated code\n", directory)
+
+            write_wokwi_main("generated code\n", directory, overwrite=True)
+            self.assertEqual(main_path.read_text(encoding="utf-8"), "generated code\n")
+
+    def test_exports_arduino_sketch_to_wokwi(self):
+        with TemporaryDirectory() as project_dir:
+            directory = Path(project_dir)
+            (directory / "diagram.json").write_text("{}", encoding="utf-8")
+
+            sketch = write_wokwi_sketch("#include <Servo.h>\nvoid setup() {}\n", directory)
+
+            self.assertEqual(sketch, directory / "sketch.ino")
+            with self.assertRaises(FileExistsError):
+                write_wokwi_sketch("replacement\n", directory)
+
+
+class WokwiBrowserTests(unittest.TestCase):
+    class FakeWindow:
+        def __init__(self, title):
+            self.title = title
+            self.left = 100
+            self.top = 40
+            self.width = 1200
+            self.height = 900
+
+    def test_wokwi_controls_are_relative_to_the_browser_window(self):
+        coordinates = _wokwi_coordinates(self.FakeWindow("PUERTA - Wokwi - Google Chrome"))
+        self.assertEqual(coordinates["file_tab"], (148, 217))
+        self.assertEqual(coordinates["save"], (220, 162))
+        self.assertEqual(coordinates["run"], (735, 271))
+        self.assertEqual(coordinates["editor"], (400, 458))
+
+    def test_wokwi_controls_match_the_measured_maximized_chrome_layout(self):
+        window = self.FakeWindow("esp32 Copy - Wokwi - Google Chrome")
+        window.left = -9
+        window.top = -9
+        window.width = 1938
+        window.height = 1098
+
+        coordinates = _wokwi_coordinates(window)
+
+        self.assertEqual(coordinates["file_tab"], (69, 190))
+        self.assertEqual(coordinates["save"], (181, 135))
+        self.assertEqual(coordinates["run"], (995, 244))
+        self.assertEqual(coordinates["editor"], (475, 502))
+
+    def test_selects_the_only_wokwi_window(self):
+        target = self.FakeWindow("esp32 - Wokwi - Google Chrome")
+        selected = _select_wokwi_window(
+            [self.FakeWindow("esp32 - Wokwi - Visual Studio Code"), target]
+        )
+        self.assertIs(selected, target)
+
+    def test_rejects_non_chrome_or_ambiguous_wokwi_windows(self):
+        with self.assertRaisesRegex(WokwiBrowserError, "No se encontró"):
+            _select_wokwi_window(
+                [self.FakeWindow("esp32 - Wokwi - Visual Studio Code")]
+            )
+        with self.assertRaisesRegex(WokwiBrowserError, "varias ventanas"):
+            _select_wokwi_window(
+                [
+                    self.FakeWindow("Wokwi - Google Chrome"),
+                    self.FakeWindow("Wokwi - Google Chrome"),
+                ]
+            )
 
 
 if __name__ == "__main__":

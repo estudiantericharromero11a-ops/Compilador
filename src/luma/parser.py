@@ -10,6 +10,8 @@ from .ast import (
     Program,
     ReadBinaryStatement,
     RepeatStatement,
+    ServoDeclaration,
+    ServoMoveStatement,
     ShowDigitStatement,
     Statement,
     WaitStatement,
@@ -82,6 +84,10 @@ class Parser:
                 statements.append(self._parse_button_declaration())
             elif token.kind is TokenKind.DISPLAY7:
                 statements.append(self._parse_display_declaration())
+            elif token.kind is TokenKind.SERVO:
+                statements.append(self._parse_servo_declaration())
+            elif token.kind is TokenKind.MOVE:
+                statements.append(self._parse_servo_move())
             elif token.kind is TokenKind.READ_BINARY:
                 statements.append(self._parse_read_binary())
             elif token.kind is TokenKind.SHOW:
@@ -132,10 +138,13 @@ class Parser:
             self._integer("Se esperaban cuatro pines para los botones"),
             self._integer("Se esperaban cuatro pines para los botones"),
         )
+        active_low = self._current().kind is TokenKind.ACTIVE_LOW
+        if active_low:
+            self._advance()
         self._expect(TokenKind.AS, "Se esperaba COMO y el nombre del grupo de botones")
         name = self._identifier("Se esperaba el nombre del grupo de botones")
         self._expect_line_end()
-        return ButtonDeclaration(token.location, name, pins)
+        return ButtonDeclaration(token.location, name, pins, active_low)
 
     def _parse_display_declaration(self) -> Display7Declaration:
         token = self._expect(TokenKind.DISPLAY7, "Se esperaba DISPLAY7")
@@ -148,11 +157,27 @@ class Parser:
             self._integer("Se esperaban siete pines para el display"),
             self._integer("Se esperaban siete pines para el display"),
         )
-        self._expect(TokenKind.ACTIVE_LOW, "Se esperaba ACTIVO_BAJO para un display de cátodo común")
+        self._expect(TokenKind.ACTIVE_LOW, "Se esperaba ACTIVO_BAJO para un display con segmentos activos en bajo")
         self._expect(TokenKind.AS, "Se esperaba COMO y el nombre del display")
         name = self._identifier("Se esperaba el nombre del display")
         self._expect_line_end()
         return Display7Declaration(token.location, name, pins)
+
+    def _parse_servo_declaration(self) -> ServoDeclaration:
+        token = self._expect(TokenKind.SERVO, "Se esperaba SERVOMOTOR")
+        pin = self._integer("Se esperaba el GPIO del servomotor")
+        self._expect(TokenKind.AS, "Se esperaba COMO y el nombre del servomotor")
+        name = self._identifier("Se esperaba el nombre del servomotor")
+        self._expect_line_end()
+        return ServoDeclaration(token.location, name, pin)
+
+    def _parse_servo_move(self) -> ServoMoveStatement:
+        token = self._expect(TokenKind.MOVE, "Se esperaba MOVER")
+        servo_name = self._identifier("Se esperaba el nombre del servomotor")
+        self._expect(TokenKind.ANGLE, "Se esperaba ANGULO antes de los grados")
+        angle = self._integer("Se esperaba el ángulo del servomotor")
+        self._expect_line_end()
+        return ServoMoveStatement(token.location, servo_name, angle)
 
     def _parse_read_binary(self) -> ReadBinaryStatement:
         token = self._expect(TokenKind.READ_BINARY, "Se esperaba LEER_BINARIO")

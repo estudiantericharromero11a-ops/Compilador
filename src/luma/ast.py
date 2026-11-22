@@ -36,12 +36,25 @@ class ForeverStatement(Statement):
 class ButtonDeclaration(Statement):
     name: str
     pins: tuple[int, int, int, int]
+    active_low: bool = False
 
 
 @dataclass(frozen=True)
 class Display7Declaration(Statement):
     name: str
     pins: tuple[int, int, int, int, int, int, int]
+
+
+@dataclass(frozen=True)
+class ServoDeclaration(Statement):
+    name: str
+    pin: int
+
+
+@dataclass(frozen=True)
+class ServoMoveStatement(Statement):
+    servo_name: str
+    angle: int
 
 
 @dataclass(frozen=True)

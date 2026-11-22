@@ -1,5 +1,7 @@
 """Validaciones semánticas para los nodos del lenguaje Luma."""
 
+from typing import Literal
+
 from .ast import (
     ButtonDeclaration,
     ClearDisplayStatement,
@@ -10,6 +12,8 @@ from .ast import (
     Program,
     ReadBinaryStatement,
     RepeatStatement,
+    ServoDeclaration,
+    ServoMoveStatement,
     ShowDigitStatement,
     Statement,
     WaitStatement,
@@ -18,12 +22,18 @@ from .errors import LumaError
 
 
 class SemanticAnalyzer:
-    """Valida declaraciones, tipos de instrucción y límites del ESP32 clásico."""
+    """Valida declaraciones, tipos de instrucción y límites de la placa destino."""
 
     OUTPUT_GPIO = frozenset((0, 1, 2, 3, 4, 5, *range(12, 20), 21, 22, 23, 25, 26, 27, 32, 33))
     INPUT_GPIO = OUTPUT_GPIO
+    MEGA_GPIO = frozenset(range(70))
     MAX_WAIT_MS = 86_400_000
     MAX_REPEAT_COUNT = 10_000
+
+    def __init__(self, board: Literal["esp32", "arduino-mega"] = "esp32") -> None:
+        self.board_name = "ESP32 clásico" if board == "esp32" else "Arduino Mega"
+        self.OUTPUT_GPIO = self.OUTPUT_GPIO if board == "esp32" else self.MEGA_GPIO
+        self.INPUT_GPIO = self.INPUT_GPIO if board == "esp32" else self.MEGA_GPIO
 
     def analyze(self, program: Program) -> None:
         self._names: dict[str, str] = {}
@@ -47,10 +57,17 @@ class SemanticAnalyzer:
                 self._validate_pins(
                     statement.pins, self.OUTPUT_GPIO, "salida", statement, f"DISPLAY7 {statement.name}"
                 )
+            elif isinstance(statement, ServoDeclaration):
+                if nested:
+                    self._error("SERVOMOTOR debe declararse fuera de los bloques", statement)
+                self._declare_name(statement.name, "servo", statement)
+                self._validate_pins(
+                    (statement.pin,), self.OUTPUT_GPIO, "salida", statement, f"SERVOMOTOR {statement.name}"
+                )
             elif isinstance(statement, LedStatement):
                 if statement.pin not in self.OUTPUT_GPIO:
                     self._error(
-                        "GPIO no disponible como salida segura en ESP32 clásico; consulta el pinout de tu placa",
+                        f"GPIO no disponible como salida segura en {self.board_name}; consulta el pinout de tu placa",
                         statement,
                     )
                 self._claim_pin(statement.pin, statement, "LED")
@@ -66,6 +83,10 @@ class SemanticAnalyzer:
             elif isinstance(statement, ReadBinaryStatement):
                 self._require_name(statement.button_name, "buttons", statement)
                 self._variables.add(statement.variable)
+            elif isinstance(statement, ServoMoveStatement):
+                self._require_name(statement.servo_name, "servo", statement)
+                if not 0 <= statement.angle <= 180:
+                    self._error("El ángulo del servomotor debe estar entre 0 y 180 grados", statement)
             elif isinstance(statement, ShowDigitStatement):
                 self._require_name(statement.display_name, "display", statement)
                 self._require_variable(statement.variable, statement)
@@ -91,7 +112,7 @@ class SemanticAnalyzer:
 
     def _require_name(self, name: str, kind: str, statement: Statement) -> None:
         if self._names.get(name) != kind:
-            expected = "BOTONES" if kind == "buttons" else "DISPLAY7"
+            expected = {"buttons": "BOTONES", "display": "DISPLAY7", "servo": "SERVOMOTOR"}[kind]
             self._error(f"{name!r} no está declarado como {expected}", statement)
 
     def _require_variable(self, name: str, statement: Statement) -> None:
@@ -110,7 +131,9 @@ class SemanticAnalyzer:
             self._error(f"Un GPIO no puede repetirse en la misma declaración de {direction}", statement)
         for pin in pins:
             if pin not in allowed:
-                self._error(f"GPIO {pin} no disponible como {direction} segura en ESP32 clásico", statement)
+                self._error(
+                    f"GPIO {pin} no disponible como {direction} segura en {self.board_name}", statement
+                )
             self._claim_pin(pin, statement, owner)
 
     def _claim_pin(self, pin: int, statement: Statement, owner: str) -> None:

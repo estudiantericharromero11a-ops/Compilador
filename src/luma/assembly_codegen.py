@@ -12,6 +12,8 @@ from .ast import (
     Program,
     ReadBinaryStatement,
     RepeatStatement,
+    ServoDeclaration,
+    ServoMoveStatement,
     ShowDigitStatement,
     Statement,
     WaitStatement,
@@ -27,6 +29,8 @@ class XtensaAssemblyCodeGenerator:
         self._next_label = 0
         self._buttons = self._find_declarations(program.body, ButtonDeclaration)
         self._displays = self._find_declarations(program.body, Display7Declaration)
+        self._servos = self._find_declarations(program.body, ServoDeclaration)
+        self._servo_pins = {declaration.name: declaration.pin for declaration in self._servos}
         self._variables = self._collect_variables(program.body)
         repeat_slots = self._max_repeat_depth(program.body)
         self._repeat_base = len(self._variables) * 4
@@ -45,6 +49,8 @@ class XtensaAssemblyCodeGenerator:
             ".extern luma_read_buttons",
             ".extern luma_display_show",
             ".extern luma_display_clear",
+            ".extern luma_servo_setup",
+            ".extern luma_servo_set_angle",
             "# Hardware hooks use a2 and subsequent ABI argument registers.",
             "luma_program:",
             *self._stack_adjustment(frame_size, allocate=True),
@@ -64,6 +70,9 @@ class XtensaAssemblyCodeGenerator:
                     "    call0 luma_display_setup",
                 ]
             )
+        for declaration in self._servos:
+            self._emit_constant(lines, "a2", declaration.pin, "    ")
+            lines.append("    call0 luma_servo_setup")
         self._emit_statements(program.body, lines, 0)
         lines.extend(
             [
@@ -88,9 +97,15 @@ class XtensaAssemblyCodeGenerator:
             elif isinstance(statement, WaitStatement):
                 self._emit_constant(lines, "a2", statement.milliseconds, indent)
                 lines.append(f"{indent}call0 luma_wait_ms")
+            elif isinstance(statement, ServoMoveStatement):
+                self._emit_constant(lines, "a2", self._servo_pins[statement.servo_name], indent)
+                self._emit_constant(lines, "a3", statement.angle, indent)
+                lines.append(f"{indent}call0 luma_servo_set_angle")
             elif isinstance(statement, ButtonDeclaration):
                 continue
             elif isinstance(statement, Display7Declaration):
+                continue
+            elif isinstance(statement, ServoDeclaration):
                 continue
             elif isinstance(statement, RepeatStatement):
                 label = self._new_label()
@@ -164,7 +179,10 @@ class XtensaAssemblyCodeGenerator:
                     f".Lbuttons_ptr_{declaration.name}:",
                     f"    .long .Lbuttons_{declaration.name}",
                     f".Lbuttons_{declaration.name}:",
-                    "    .long " + ", ".join(str(pin) for pin in declaration.pins),
+                    "    # Four GPIOs followed by the active-low flag.",
+                    "    .long "
+                    + ", ".join(str(pin) for pin in declaration.pins)
+                    + f", {int(declaration.active_low)}",
                 ]
             )
         for declaration in self._displays:

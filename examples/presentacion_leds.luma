@@ -1,0 +1,86 @@
+# Switch 1 habilita el patron de siete LEDs rojos
+INICIAR
+
+BOTONES 32 33 25 26 COMO control
+
+LED 13 APAGAR
+LED 14 APAGAR
+LED 18 APAGAR
+LED 19 APAGAR
+LED 21 APAGAR
+LED 22 APAGAR
+LED 23 APAGAR
+
+REPETIR_SIEMPRE
+    LEER_BINARIO control COMO habilitado
+    SI habilitado == 8
+        # Rebote de un punto de luz
+        LED 13 ENCENDER
+        ESPERAR 90
+        LED 13 APAGAR
+        LED 14 ENCENDER
+        ESPERAR 90
+        LED 14 APAGAR
+        LED 18 ENCENDER
+        ESPERAR 90
+        LED 18 APAGAR
+        LED 19 ENCENDER
+        ESPERAR 90
+        LED 19 APAGAR
+        LED 21 ENCENDER
+        ESPERAR 90
+        LED 21 APAGAR
+        LED 22 ENCENDER
+        ESPERAR 90
+        LED 22 APAGAR
+        LED 23 ENCENDER
+        ESPERAR 90
+        LED 23 APAGAR
+        LED 22 ENCENDER
+        ESPERAR 90
+        LED 22 APAGAR
+        LED 21 ENCENDER
+        ESPERAR 90
+        LED 21 APAGAR
+        LED 19 ENCENDER
+        ESPERAR 90
+        LED 19 APAGAR
+        LED 18 ENCENDER
+        ESPERAR 90
+        LED 18 APAGAR
+        LED 14 ENCENDER
+        ESPERAR 90
+        LED 14 APAGAR
+
+        # Alterna dos grupos de LEDs
+        REPETIR 2
+            LED 13 ENCENDER
+            LED 14 APAGAR
+            LED 18 ENCENDER
+            LED 19 APAGAR
+            LED 21 ENCENDER
+            LED 22 APAGAR
+            LED 23 ENCENDER
+            ESPERAR 180
+            LED 13 APAGAR
+            LED 14 ENCENDER
+            LED 18 APAGAR
+            LED 19 ENCENDER
+            LED 21 APAGAR
+            LED 22 ENCENDER
+            LED 23 APAGAR
+            ESPERAR 180
+        FIN_REPETIR
+    SINO
+        LED 13 APAGAR
+        LED 14 APAGAR
+        LED 18 APAGAR
+        LED 19 APAGAR
+        LED 21 APAGAR
+        LED 22 APAGAR
+        LED 23 APAGAR
+    FIN_SI
+    ESPERAR 50
+FIN_REPETIR_SIEMPRE
+
+FINALIZAR

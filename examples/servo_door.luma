@@ -1,0 +1,25 @@
+# Control de una puerta con servomotor y dos botones
+INICIAR
+
+SERVOMOTOR 9 COMO puerta
+BOTONES 2 3 12 13 ACTIVO_BAJO COMO controles
+
+REPETIR_SIEMPRE
+    LEER_BINARIO controles COMO estado
+    SI estado >= 8
+        MOVER puerta ANGULO 0
+        LED 6 ENCENDER
+        LED 7 APAGAR
+    SINO
+        SI estado == 4
+            MOVER puerta ANGULO 90
+            LED 6 APAGAR
+            LED 7 ENCENDER
+        SINO
+            LED 6 APAGAR
+            LED 7 APAGAR
+        FIN_SI
+    FIN_SI
+FIN_REPETIR_SIEMPRE
+
+FINALIZAR

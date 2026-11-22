@@ -8,10 +8,12 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
+from typing import Literal
 
-from .compiler import compile_source
+from .compiler import compile_source, write_wokwi_main, write_wokwi_sketch
 from .errors import LumaError
 from .transport import MicroPythonSerial, SerialTransportError, list_serial_ports
+from .wokwi_browser import WokwiBrowserError, paste_and_restart_wokwi
 
 SAMPLE_PROGRAM = """INICIAR
 
@@ -31,11 +33,12 @@ class LumaApp:
 
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Luma — Compilador para ESP32")
+        self.root.title("Luma — Compilador ESP32 y Arduino Mega")
         self.root.geometry("1100x760")
         self.transport: MicroPythonSerial | None = None
         self.current_path: Path | None = None
         self.generated_code: str | None = None
+        self.generated_arduino: str | None = None
         self._build_ui()
         self._refresh_ports()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -50,6 +53,22 @@ class LumaApp:
             ("Compilar", self._compile),
         ):
             ttk.Button(toolbar, text=label, command=command).pack(side=tk.LEFT, padx=3)
+
+        self.wokwi_target_var = tk.StringVar(value="Arduino Mega")
+        ttk.Label(toolbar, text="Destino Wokwi:").pack(side=tk.LEFT, padx=(8, 2))
+        ttk.Combobox(
+            toolbar,
+            textvariable=self.wokwi_target_var,
+            values=("Arduino Mega", "MicroPython"),
+            width=14,
+            state="readonly",
+        ).pack(side=tk.LEFT, padx=3)
+        ttk.Button(toolbar, text="Exportar a Wokwi", command=self._export_selected_wokwi).pack(
+            side=tk.LEFT, padx=3
+        )
+        ttk.Button(
+            toolbar, text="Enviar a Wokwi", command=self._compile_and_send_selected_wokwi
+        ).pack(side=tk.LEFT, padx=3)
 
         self.port_var = tk.StringVar()
         self.port_combo = ttk.Combobox(toolbar, textvariable=self.port_var, width=17, state="readonly")
@@ -76,14 +95,23 @@ class LumaApp:
         self.editor.bind("<KeyRelease>", self._highlight)
         output_tabs = ttk.Notebook(output_frame)
         output_tabs.pack(fill=tk.BOTH, expand=True)
+        self.output_tabs = output_tabs
         micropython_frame = ttk.Frame(output_tabs)
+        arduino_frame = ttk.Frame(output_tabs)
         assembly_frame = ttk.Frame(output_tabs)
+        self.micropython_tab = micropython_frame
+        self.arduino_tab = arduino_frame
         output_tabs.add(micropython_frame, text="MicroPython")
+        output_tabs.add(arduino_frame, text="Arduino Mega")
         output_tabs.add(assembly_frame, text="Ensamblador Xtensa")
         self.output = ScrolledText(
             micropython_frame, wrap=tk.NONE, font=("Consolas", 10), state=tk.DISABLED
         )
         self.output.pack(fill=tk.BOTH, expand=True)
+        self.arduino_output = ScrolledText(
+            arduino_frame, wrap=tk.NONE, font=("Consolas", 10), state=tk.DISABLED
+        )
+        self.arduino_output.pack(fill=tk.BOTH, expand=True)
         self.assembly_output = ScrolledText(
             assembly_frame, wrap=tk.NONE, font=("Consolas", 10), state=tk.DISABLED
         )
@@ -103,7 +131,8 @@ class LumaApp:
         self.editor.tag_remove("comment", "1.0", tk.END)
         keywords = (
             r"\b(?:INICIAR|FINALIZAR|LED|ENCENDER|APAGAR|ESPERAR|REPETIR|FIN_REPETIR|"
-            r"BOTONES|COMO|DISPLAY7|ACTIVO_BAJO|LEER_BINARIO|SI|SINO|FIN_SI|MOSTRAR|EN|"
+            r"BOTONES|COMO|DISPLAY7|SERVOMOTOR|MOVER|ANGULO|ACTIVO_BAJO|LEER_BINARIO|"
+            r"SI|SINO|FIN_SI|MOSTRAR|EN|"
             r"LIMPIAR|REPETIR_SIEMPRE|FIN_REPETIR_SIEMPRE)\b"
         )
         for match in re.finditer(keywords, source, re.IGNORECASE):
@@ -152,12 +181,17 @@ class LumaApp:
         self.run_button.configure(state=tk.DISABLED)
         self._log("Puerto serial cerrado.")
 
-    def _compile(self) -> bool:
+    def _compile(self, *, board: Literal["esp32", "arduino-mega"] | None = None) -> bool:
         try:
-            result = compile_source(self.editor.get("1.0", "end-1c"))
+            selected_board = board or (
+                "arduino-mega" if self.wokwi_target_var.get() == "Arduino Mega" else "esp32"
+            )
+            result = compile_source(self.editor.get("1.0", "end-1c"), board=selected_board)
         except LumaError as error:
             self.generated_code = None
+            self.generated_arduino = None
             self._set_output("")
+            self._set_arduino_output("")
             self._set_assembly_output("")
             self._log(f"Error de compilación: {error}")
             self.editor.mark_set(tk.INSERT, f"{error.location.line}.{error.location.column - 1}")
@@ -165,11 +199,19 @@ class LumaApp:
             messagebox.showerror("Error de compilación", str(error))
             return False
         self.generated_code = result.generated_code
+        self.generated_arduino = result.generated_arduino
         self._set_output(result.generated_code)
+        self._set_arduino_output(result.generated_arduino)
         self._set_assembly_output(result.generated_assembly)
+        target_tab = (
+            self.arduino_tab
+            if self.wokwi_target_var.get() == "Arduino Mega"
+            else self.micropython_tab
+        )
+        self.output_tabs.select(target_tab)
         self._log(
             "Compilación correcta: análisis léxico, sintáctico y semántico completados; "
-            "salidas MicroPython y ensamblador Xtensa generadas."
+            "salidas Arduino, MicroPython y ensamblador Xtensa generadas."
         )
         return True
 
@@ -177,13 +219,111 @@ class LumaApp:
         if self.transport is None:
             messagebox.showwarning("Sin conexión", "Conecta primero una placa con MicroPython.")
             return
-        if not self._compile():
+        if not self._compile(board="esp32"):
             return
         self.run_button.configure(state=tk.DISABLED)
         self.status_var.set("Ejecutando…")
         code = self.generated_code or ""
         thread = threading.Thread(target=self._execute_worker, args=(code,), daemon=True)
         thread.start()
+
+    def _export_wokwi(self) -> None:
+        project_dir = filedialog.askdirectory(title="Selecciona la carpeta del proyecto Wokwi")
+        if not project_dir or not self._compile():
+            return
+        main_path = Path(project_dir) / "main.py"
+        overwrite = main_path.exists()
+        if overwrite and not messagebox.askyesno(
+            "Sobrescribir main.py",
+            f"El proyecto ya contiene {main_path}.\n¿Quieres reemplazarlo con el código generado?",
+        ):
+            return
+        try:
+            output_path = write_wokwi_main(
+                self.generated_code or "", project_dir, overwrite=overwrite
+            )
+        except (OSError, ValueError) as error:
+            self._log(f"Error al exportar a Wokwi: {error}")
+            messagebox.showerror("No se pudo exportar a Wokwi", str(error))
+            return
+        self._log(f"MicroPython exportado a {output_path}. Inicia la simulación en Wokwi.")
+
+    def _export_selected_wokwi(self) -> None:
+        if self.wokwi_target_var.get() == "Arduino Mega":
+            self._export_arduino_wokwi()
+        else:
+            self._export_wokwi()
+
+    def _export_arduino_wokwi(self) -> None:
+        project_dir = filedialog.askdirectory(title="Selecciona la carpeta del proyecto Wokwi")
+        if not project_dir or not self._compile():
+            return
+        sketch_path = Path(project_dir) / "sketch.ino"
+        overwrite = sketch_path.exists()
+        if overwrite and not messagebox.askyesno(
+            "Sobrescribir sketch.ino",
+            f"El proyecto ya contiene {sketch_path}.\n¿Quieres reemplazarlo con Arduino Mega?",
+        ):
+            return
+        try:
+            output_path = write_wokwi_sketch(
+                self.generated_arduino or "", project_dir, overwrite=overwrite
+            )
+        except (OSError, ValueError) as error:
+            self._log(f"Error al exportar Arduino a Wokwi: {error}")
+            messagebox.showerror("No se pudo exportar a Wokwi", str(error))
+            return
+        self._log(f"Sketch Arduino exportado a {output_path}. Inicia la simulación en Wokwi.")
+
+    def _compile_and_send_wokwi(self) -> None:
+        if not self._compile():
+            return
+        if not messagebox.askyesno(
+            "Enviar código a Wokwi",
+            "Luma reemplazará main.py, pulsará Guardar y reiniciará la simulación en la única "
+            "ventana de Wokwi abierta en Google Chrome.\n\n"
+            "Asegúrate de tener abierto el proyecto correcto. ¿Continuar?",
+        ):
+            return
+        try:
+            paste_and_restart_wokwi(self.generated_code or "")
+        except WokwiBrowserError as error:
+            self._log(f"Error al enviar a Wokwi: {error}")
+            messagebox.showerror("No se pudo enviar a Wokwi", str(error))
+            return
+        self._log(
+            "Código compilado pegado en main.py; se solicitó guardar el proyecto y reiniciar la simulación. "
+            "Verifica en Wokwi si el guardado requiere iniciar sesión."
+        )
+
+    def _compile_and_send_selected_wokwi(self) -> None:
+        if self.wokwi_target_var.get() == "Arduino Mega":
+            self._compile_and_send_arduino_wokwi()
+        else:
+            self._compile_and_send_wokwi()
+
+    def _compile_and_send_arduino_wokwi(self) -> None:
+        if not self._compile():
+            return
+        if not messagebox.askyesno(
+            "Enviar Arduino a Wokwi",
+            "Luma reemplazará el contenido del editor activo con Arduino Mega para sketch.ino, "
+            "pulsará Guardar y reiniciará la simulación.\n\n"
+            "Asegúrate de que sketch.ino está abierto y que el proyecto usa Arduino Mega. ¿Continuar?",
+        ):
+            return
+        try:
+            paste_and_restart_wokwi(
+                self.generated_arduino or "", target_file="sketch.ino"
+            )
+        except WokwiBrowserError as error:
+            self._log(f"Error al enviar Arduino a Wokwi: {error}")
+            messagebox.showerror("No se pudo enviar a Wokwi", str(error))
+            return
+        self._log(
+            "Código Arduino pegado en el editor activo; se solicitó guardar y reiniciar Wokwi. "
+            "La biblioteca Servo se incluye normalmente con el núcleo Arduino Mega."
+        )
 
     def _execute_worker(self, code: str) -> None:
         try:
@@ -265,6 +405,12 @@ class LumaApp:
         self.assembly_output.delete("1.0", tk.END)
         self.assembly_output.insert("1.0", code)
         self.assembly_output.configure(state=tk.DISABLED)
+
+    def _set_arduino_output(self, code: str) -> None:
+        self.arduino_output.configure(state=tk.NORMAL)
+        self.arduino_output.delete("1.0", tk.END)
+        self.arduino_output.insert("1.0", code)
+        self.arduino_output.configure(state=tk.DISABLED)
 
     def _log(self, message: str) -> None:
         self.log.configure(state=tk.NORMAL)
