@@ -2,18 +2,18 @@
 
 Luma es un lenguaje de instrucciones en español que se compila mediante etapas reales —lexer, parser con AST, análisis semántico y generador— a MicroPython para ESP32, Arduino C++ para Arduino Mega y un módulo de ensamblador GNU Xtensa LX6. La interfaz Tkinter edita y compila programas, detecta puertos serie y puede ejecutar el código MicroPython en un ESP32 mediante USB/Serial.
 
-La versión actual también permite leer cuatro entradas digitales, calcular su valor binario y controlar un display de siete segmentos con segmentos activos en bajo. La conexión HTTP/Wi‑Fi del ejemplo externo no forma parte del lenguaje ni se genera.
+Luma también permite leer grupos de cuatro entradas o botones individuales, controlar un display de siete segmentos o una LCD 16×2, mover servomotores y crear máquinas de estados con variables enteras. La conexión HTTP/Wi‑Fi del ejemplo externo no forma parte del lenguaje ni se genera.
 
 Consulta el [Manual de usuario de Luma](./MANUAL_USUARIO.md) para ver el diccionario de instrucciones, la sintaxis, los límites del lenguaje y ejemplos de uso.
 
 ## Decisiones y arquitectura
 
 - **MicroPython como destino inicial:** no requiere compilar un firmware Arduino; el programa generado se ejecuta en el Raw REPL de MicroPython. El firmware MicroPython debe estar instalado previamente en la placa.
-- **Arduino C++ para Wokwi:** el destino `arduino` valida pines de Arduino Mega y genera `sketch.ino` con la biblioteca estándar `Servo`.
+- **Arduino C++ para Wokwi:** el destino `arduino` valida pines de Arduino Mega y genera `sketch.ino` con las bibliotecas estándar `Servo` y `LiquidCrystal` cuando se necesitan.
 - **Python 3.10+ y Tkinter:** pyserial habilita el ESP32 físico y pyautogui automatiza el editor web de Wokwi en Windows. Tkinter suele venir con Python.
 - `src/luma/lexer.py`: tokens, palabras clave, caracteres inválidos y ubicación.
 - `src/luma/parser.py` y `ast.py`: gramática, errores de sintaxis y árbol.
-- `src/luma/semantic.py`: rangos de GPIO, duración y repeticiones.
+- `src/luma/semantic.py`: rangos de GPIO, declaraciones de dispositivos, variables, LCD, duración y repeticiones.
 - `src/luma/codegen.py`: traducción independiente del transporte a MicroPython.
 - `src/luma/arduino_codegen.py`: generación de sketches Arduino Mega.
 - `src/luma/assembly_codegen.py`: backend de ensamblador Xtensa LX6 con llamadas a rutinas de hardware externas.
@@ -33,16 +33,25 @@ Las palabras clave no distinguen mayúsculas de minúsculas. Se permite indentac
 ```ebnf
 programa      = INICIAR, nueva_linea, { sentencia }, FINALIZAR, nueva_linea ;
 sentencia     = instruccion_led | espera | repeticion | botones | display7 |
-                servomotor | mover_servo | leer | mostrar | limpiar |
-                condicional | continuo ;
+                boton | leer_boton | asignar | lcd16x2 | limpiar_lcd |
+                cursor_lcd | escribir_lcd | servomotor | mover_servo |
+                leer | mostrar | limpiar | condicional | continuo ;
 instruccion_led = LED, entero, (ENCENDER | APAGAR), nueva_linea ;
 espera        = ESPERAR, entero, nueva_linea ;
 repeticion    = REPETIR, entero, nueva_linea, { sentencia },
                 FIN_REPETIR, nueva_linea ;
 botones       = BOTONES, entero, entero, entero, entero, [ ACTIVO_BAJO ],
                 COMO, identificador ;
+boton         = BOTON, entero, [ ACTIVO_BAJO ], COMO, identificador ;
+leer_boton    = LEER_BOTON, identificador, COMO, identificador ;
+asignar       = ASIGNAR, identificador, "=", entero ;
 display7      = DISPLAY7, entero, entero, entero, entero, entero, entero, entero,
                 ACTIVO_BAJO, COMO, identificador ;
+lcd16x2       = LCD16X2, entero, entero, entero, entero, entero, entero,
+                COMO, identificador ;
+limpiar_lcd   = LIMPIAR_LCD, identificador ;
+cursor_lcd    = CURSOR_LCD, identificador, entero, entero ;
+escribir_lcd  = ESCRIBIR_LCD, identificador, cadena ;
 servomotor    = SERVOMOTOR, entero, COMO, identificador ;
 mover_servo   = MOVER, identificador, ANGULO, entero ;
 leer          = LEER_BINARIO, identificador, COMO, identificador ;
@@ -52,7 +61,10 @@ condicional   = SI, identificador, operador_comparacion, entero, nueva_linea,
                 { sentencia }, [ SINO, nueva_linea, { sentencia } ], FIN_SI ;
 continuo      = REPETIR_SIEMPRE, nueva_linea, { sentencia }, FIN_REPETIR_SIEMPRE ;
 operador_comparacion = "<" | "<=" | ">" | ">=" | "==" | "!=" ;
+cadena              = '"', { carácter_ASCII_imprimible | '\"' | '\\' }, '"' ;
 ```
+
+`ASIGNAR` recibe un entero de 0 a 65535. Una cadena LCD va entre comillas y admite caracteres ASCII imprimibles, `\"` y `\\`.
 
 ### Ejemplo: botones y display de siete segmentos
 
@@ -89,6 +101,12 @@ Los nombres de botones y display se declaran con `COMO`. En ESP32, `BOTONES` con
 
 [examples/servo_door.luma](./examples/servo_door.luma) reproduce el circuito Wokwi Arduino Mega: servo en el pin 9, botones activos en bajo en los pines 2/3 y LEDs en 6/7. El botón 1 abre a 0° y enciende el LED verde; el botón 2 cierra a 90° y enciende el rojo. Si se presionan ambos, abrir tiene prioridad como en el sketch original. Al soltar los botones, ambos LEDs se apagan y el servo mantiene su posición. `ACTIVO_BAJO` conserva `INPUT_PULLUP`: conecta los botones entre sus pines y GND. Los pines 12/13 son entradas auxiliares con pull-up interno, sin conectar. En hardware real, alimenta el servo desde una fuente adecuada y comparte GND con el Mega.
 
+### Ejemplo: máquina expendedora
+
+[examples/maquina_bebidas.luma](./examples/maquina_bebidas.luma) implementa la máquina de bebidas con una LCD 16×2, seis botones activos en bajo, cuatro LEDs de selección, un LED indicador y un servomotor. Utiliza Arduino Mega: botones A0–A5 corresponden a pines digitales 54–59; la LCD usa RS=12, E=11 y D4–D7=5,4,3,2; el servo usa el pin 10; los LEDs usan 6–9 y 13. El pin 13 se configura como salida para el indicador de reposo y el estado de selección espera correctamente una bebida antes de dispensarla.
+
+Compila el programa como Arduino y envíalo a un proyecto Wokwi configurado como **Arduino Mega**, con `sketch.ino` abierto. La salida Xtensa `.S` es un módulo de referencia para otro backend, depende de rutinas de hardware externas y no puede ejecutarse en Wokwi; la GUI permite guardarla localmente con **Guardar Xtensa .S**.
+
 ## Instalación y uso
 
 ```powershell
@@ -119,12 +137,14 @@ Para generar Arduino C++ compatible con `sketch.ino`:
 ```powershell
 python -m luma examples\servo_door.luma --target arduino
 python -m luma examples\servo_door.luma --target arduino --output sketch.ino
+python -m luma examples\maquina_bebidas.luma --target arduino --output sketch.ino
 ```
 
 Para exportar directamente a una copia local de un proyecto Wokwi (debe incluir `diagram.json`), elige el destino adecuado:
 
 ```powershell
 python -m luma examples\servo_door.luma --target arduino --wokwi-dir "C:\ruta\al\proyecto-wokwi" --force
+python -m luma examples\maquina_bebidas.luma --target arduino --wokwi-dir "C:\ruta\al\proyecto-wokwi" --force
 python -m luma examples\switch_display.luma --target micropython --wokwi-dir "C:\ruta\al\proyecto-wokwi" --force
 ```
 
@@ -141,7 +161,7 @@ python -m luma examples\parpadeo.luma --target xtensa
 python -m luma examples\parpadeo.luma --target xtensa --output parpadeo_xtensa.S
 ```
 
-La pestaña **Ensamblador Xtensa** de la GUI muestra esta salida adicional. Este backend está dirigido al ESP32 clásico (Xtensa LX6); otros modelos ESP32 pueden usar Xtensa LX7 o RISC-V y requieren un backend diferente. La salida llama a rutinas externas (`luma_read_buttons`, `luma_display_show`, entre otras) que aún requieren un runtime de hardware; no es, por sí sola, un programa ejecutable ni se carga con **Ejecutar en ESP32**.
+La pestaña **Ensamblador Xtensa** de la GUI muestra esta salida adicional y **Guardar Xtensa .S** la exporta como archivo local. Este backend está dirigido al ESP32 clásico (Xtensa LX6); otros modelos ESP32 pueden usar Xtensa LX7 o RISC-V y requieren un backend diferente. La salida llama a rutinas externas (`luma_read_buttons`, `luma_display_show`, `luma_lcd_write`, entre otras) que aún requieren un runtime de hardware; no es, por sí sola, un programa ejecutable ni se carga con **Ejecutar en ESP32**. Para la máquina expendedora usa `sketch.ino` en Arduino Mega, no su salida Xtensa.
 
 ## Ejecutar en hardware real
 

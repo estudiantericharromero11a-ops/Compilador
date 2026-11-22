@@ -2,8 +2,15 @@
 
 from .ast import (
     ButtonDeclaration,
+    SingleButtonDeclaration,
+    ReadButtonStatement,
+    AssignmentStatement,
     ClearDisplayStatement,
     Display7Declaration,
+    Lcd16x2Declaration,
+    LcdClearStatement,
+    LcdCursorStatement,
+    LcdWriteStatement,
     ForeverStatement,
     IfStatement,
     LedStatement,
@@ -82,8 +89,22 @@ class Parser:
                 statements.append(self._parse_wait())
             elif token.kind is TokenKind.BUTTONS:
                 statements.append(self._parse_button_declaration())
+            elif token.kind is TokenKind.BUTTON:
+                statements.append(self._parse_single_button_declaration())
+            elif token.kind is TokenKind.READ_BUTTON:
+                statements.append(self._parse_read_button())
+            elif token.kind is TokenKind.ASSIGN:
+                statements.append(self._parse_assignment())
             elif token.kind is TokenKind.DISPLAY7:
                 statements.append(self._parse_display_declaration())
+            elif token.kind is TokenKind.LCD16X2:
+                statements.append(self._parse_lcd_declaration())
+            elif token.kind is TokenKind.LCD_CLEAR:
+                statements.append(self._parse_lcd_clear())
+            elif token.kind is TokenKind.LCD_CURSOR:
+                statements.append(self._parse_lcd_cursor())
+            elif token.kind is TokenKind.LCD_WRITE:
+                statements.append(self._parse_lcd_write())
             elif token.kind is TokenKind.SERVO:
                 statements.append(self._parse_servo_declaration())
             elif token.kind is TokenKind.MOVE:
@@ -146,6 +167,33 @@ class Parser:
         self._expect_line_end()
         return ButtonDeclaration(token.location, name, pins, active_low)
 
+    def _parse_single_button_declaration(self) -> SingleButtonDeclaration:
+        token = self._expect(TokenKind.BUTTON, "Se esperaba BOTON")
+        pin = self._integer("Se esperaba el GPIO del botón")
+        active_low = self._current().kind is TokenKind.ACTIVE_LOW
+        if active_low:
+            self._advance()
+        self._expect(TokenKind.AS, "Se esperaba COMO y el nombre del botón")
+        name = self._identifier("Se esperaba el nombre del botón")
+        self._expect_line_end()
+        return SingleButtonDeclaration(token.location, name, pin, active_low)
+
+    def _parse_read_button(self) -> ReadButtonStatement:
+        token = self._expect(TokenKind.READ_BUTTON, "Se esperaba LEER_BOTON")
+        button_name = self._identifier("Se esperaba el nombre del botón")
+        self._expect(TokenKind.AS, "Se esperaba COMO antes del nombre de variable")
+        variable = self._identifier("Se esperaba el nombre de variable")
+        self._expect_line_end()
+        return ReadButtonStatement(token.location, button_name, variable)
+
+    def _parse_assignment(self) -> AssignmentStatement:
+        token = self._expect(TokenKind.ASSIGN, "Se esperaba ASIGNAR")
+        variable = self._identifier("Se esperaba el nombre de variable")
+        self._expect(TokenKind.ASSIGNMENT, "Se esperaba '=' después del nombre de variable")
+        value = self._integer("Se esperaba un número después de '='")
+        self._expect_line_end()
+        return AssignmentStatement(token.location, variable, value)
+
     def _parse_display_declaration(self) -> Display7Declaration:
         token = self._expect(TokenKind.DISPLAY7, "Se esperaba DISPLAY7")
         pins = (
@@ -162,6 +210,42 @@ class Parser:
         name = self._identifier("Se esperaba el nombre del display")
         self._expect_line_end()
         return Display7Declaration(token.location, name, pins)
+
+    def _parse_lcd_declaration(self) -> Lcd16x2Declaration:
+        token = self._expect(TokenKind.LCD16X2, "Se esperaba LCD16X2")
+        pins = (
+            self._integer("Se esperaban seis pines para LCD16X2"),
+            self._integer("Se esperaban seis pines para LCD16X2"),
+            self._integer("Se esperaban seis pines para LCD16X2"),
+            self._integer("Se esperaban seis pines para LCD16X2"),
+            self._integer("Se esperaban seis pines para LCD16X2"),
+            self._integer("Se esperaban seis pines para LCD16X2"),
+        )
+        self._expect(TokenKind.AS, "Se esperaba COMO y el nombre de la LCD")
+        name = self._identifier("Se esperaba el nombre de la LCD")
+        self._expect_line_end()
+        return Lcd16x2Declaration(token.location, name, pins)
+
+    def _parse_lcd_clear(self) -> LcdClearStatement:
+        token = self._expect(TokenKind.LCD_CLEAR, "Se esperaba LIMPIAR_LCD")
+        name = self._identifier("Se esperaba el nombre de la LCD")
+        self._expect_line_end()
+        return LcdClearStatement(token.location, name)
+
+    def _parse_lcd_cursor(self) -> LcdCursorStatement:
+        token = self._expect(TokenKind.LCD_CURSOR, "Se esperaba CURSOR_LCD")
+        name = self._identifier("Se esperaba el nombre de la LCD")
+        column = self._integer("Se esperaba la columna del cursor")
+        row = self._integer("Se esperaba la fila del cursor")
+        self._expect_line_end()
+        return LcdCursorStatement(token.location, name, column, row)
+
+    def _parse_lcd_write(self) -> LcdWriteStatement:
+        token = self._expect(TokenKind.LCD_WRITE, "Se esperaba ESCRIBIR_LCD")
+        name = self._identifier("Se esperaba el nombre de la LCD")
+        text = self._expect(TokenKind.STRING, "Se esperaba un texto entre comillas")
+        self._expect_line_end()
+        return LcdWriteStatement(token.location, name, text.lexeme)
 
     def _parse_servo_declaration(self) -> ServoDeclaration:
         token = self._expect(TokenKind.SERVO, "Se esperaba SERVOMOTOR")

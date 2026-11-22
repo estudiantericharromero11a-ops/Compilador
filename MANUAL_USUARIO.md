@@ -1,6 +1,6 @@
 # Manual de usuario de Luma
 
-Luma es un lenguaje de instrucciones en español para describir programas sencillos de LEDs, botones, displays de siete segmentos y servomotores. El compilador analiza cada programa y genera MicroPython para ESP32, Arduino C++ para Arduino Mega y una salida de ensamblador Xtensa LX6.
+Luma es un lenguaje de instrucciones en español para describir programas de LEDs, botones, displays de siete segmentos, LCD 16×2 y servomotores. Con variables enteras y condicionales también se pueden construir máquinas de estados. El compilador genera MicroPython para ESP32, Arduino C++ para Arduino Mega y una salida de ensamblador Xtensa LX6.
 
 Este manual describe la sintaxis que acepta el compilador. No es un lenguaje Python ni C++: escribe los comandos Luma en un archivo `.luma` y compílalo para el destino elegido.
 
@@ -29,8 +29,9 @@ El programa hace parpadear el GPIO 2 cinco veces, con una espera de 500 milisegu
 - Escribe una instrucción por línea. La indentación facilita la lectura de los bloques, pero no determina su alcance.
 - `#` inicia un comentario que continúa hasta el final de la línea. Puede usarse en una línea aparte o después de una instrucción.
 - Se permiten líneas vacías.
-- Declara `BOTONES`, `DISPLAY7` y `SERVOMOTOR` fuera de ciclos y condicionales, antes de utilizarlos.
-- Los programas solo pueden usar las instrucciones documentadas aquí; no admiten expresiones aritméticas ni asignaciones libres. Las variables reciben valores mediante `LEER_BINARIO`.
+- Declara `BOTONES`, `BOTON`, `DISPLAY7`, `LCD16X2` y `SERVOMOTOR` fuera de ciclos y condicionales, antes de utilizarlos.
+- Las cadenas de LCD van entre comillas dobles y solo admiten caracteres ASCII imprimibles. Para incluir una comilla doble o una barra inversa usa `\"` o `\\`.
+- No se admiten expresiones aritméticas ni asignaciones libres. `ASIGNAR` almacena un entero literal; `LEER_BINARIO` y `LEER_BOTON` almacenan entradas digitales.
 
 ## Diccionario de palabras reservadas
 
@@ -47,13 +48,20 @@ El programa hace parpadear el GPIO 2 cinco veces, con una espera de 500 milisegu
 | `REPETIR_SIEMPRE` | Inicia un ciclo que se repite indefinidamente. |
 | `FIN_REPETIR_SIEMPRE` | Cierra un ciclo `REPETIR_SIEMPRE`. |
 | `BOTONES` | Declara cuatro pines de entrada como un grupo de switches o botones. |
+| `BOTON` | Declara un pin de entrada para leer un botón individual. |
 | `ACTIVO_BAJO` | Configura botones activos en bajo; también es obligatorio para declarar un display de segmentos activos en bajo. |
 | `COMO` | Asigna un nombre a una declaración o al resultado de `LEER_BINARIO`. |
 | `LEER_BINARIO` | Lee los cuatro pines de una declaración `BOTONES` y guarda un número de 0 a 15. |
+| `LEER_BOTON` | Lee un botón individual y asigna 1 si está presionado o 0 si no. |
+| `ASIGNAR` | Asigna un entero literal a una variable, por ejemplo `ASIGNAR estado = 0`. |
 | `SI` | Inicia una condición que compara una variable con un número. |
 | `SINO` | Inicia la alternativa de un bloque `SI`; es opcional. |
 | `FIN_SI` | Cierra un bloque `SI`. |
 | `DISPLAY7` | Declara siete pines de salida para los segmentos A, B, C, D, E, F y G, en ese orden. |
+| `LCD16X2` | Declara una pantalla LCD de 16 columnas por 2 filas en modo de 4 bits. |
+| `ESCRIBIR_LCD` | Escribe una cadena entre comillas dobles en la posición actual del cursor LCD. |
+| `CURSOR_LCD` | Coloca el cursor LCD en una columna y fila específicas. |
+| `LIMPIAR_LCD` | Borra la pantalla LCD y vuelve el cursor a la posición inicial. |
 | `MOSTRAR` | Muestra en un display el valor de una variable, si está entre 0 y 9. |
 | `EN` | Separa el valor y el display en `MOSTRAR`. |
 | `LIMPIAR` | Apaga los siete segmentos del display. |
@@ -75,6 +83,8 @@ El programa hace parpadear el GPIO 2 cinco veces, con una espera de 500 milisegu
 | `!=` | Distinto de |
 
 La forma de la condición es `SI nombre_variable operador número`. No se admiten comparaciones entre dos variables ni condiciones compuestas con `Y` u `O`.
+
+El operador `=` se usa únicamente en `ASIGNAR`; no es un operador de comparación. `ASIGNAR` admite enteros de 0 a 65535. Las comparaciones de `SI` admiten valores de 0 a 15.
 
 ## Instrucciones y ejemplos
 
@@ -131,6 +141,37 @@ Con `ACTIVO_BAJO`, el nivel bajo se interpreta como botón presionado y bit 1. E
 BOTONES 2 3 12 13 ACTIVO_BAJO COMO controles
 ```
 
+Para controlar cada botón por separado, declara una entrada individual:
+
+```text
+BOTON 14 ACTIVO_BAJO COMO botonDinero
+LEER_BOTON botonDinero COMO presionado
+SI presionado == 1
+    LED 13 ENCENDER
+FIN_SI
+```
+
+`BOTON` usa el mismo comportamiento eléctrico activo bajo de `BOTONES`: configura `PULL_UP` en ESP32 o `INPUT_PULLUP` en Arduino Mega, y conecta el botón entre el pin y GND. Sin `ACTIVO_BAJO`, el nivel alto significa presionado; en Arduino Mega hace falta una resistencia externa.
+
+### Variables y máquinas de estados
+
+```text
+ASIGNAR estado = 0
+REPETIR_SIEMPRE
+    SI estado == 0
+        LED 13 ENCENDER
+        ASIGNAR estado = 1
+    SINO
+        SI estado == 1
+            LED 13 APAGAR
+            ASIGNAR estado = 0
+        FIN_SI
+    FIN_SI
+FIN_REPETIR_SIEMPRE
+```
+
+Una variable recibe su valor con `ASIGNAR`, `LEER_BINARIO` o `LEER_BOTON`. Declara cada estado con un número y compara la variable con `SI`. Para que solo se procese un estado por iteración, encadena las alternativas con `SINO`.
+
 ### Condiciones
 
 ```text
@@ -156,6 +197,20 @@ LIMPIAR display
 
 Usa una resistencia limitadora adecuada para cada segmento y verifica el tipo y pinout del display antes de conectarlo.
 
+### LCD 16×2
+
+Ejemplo de pines para Arduino Mega:
+
+```text
+LCD16X2 12 11 5 4 3 2 COMO pantalla
+LIMPIAR_LCD pantalla
+ESCRIBIR_LCD pantalla "Ingrese dinero:"
+CURSOR_LCD pantalla 0 1
+ESCRIBIR_LCD pantalla "Seleccione bebida"
+```
+
+Los seis pines siguen el orden de `LiquidCrystal` de Arduino: RS, E, D4, D5, D6, D7. `CURSOR_LCD` recibe primero la columna (0–15) y luego la fila (0 o 1). La LCD ocupa los seis pines declarados; no los compartas con otros dispositivos.
+
 ### Servomotor
 
 ```text
@@ -164,6 +219,19 @@ MOVER puerta ANGULO 90
 ```
 
 El ángulo debe estar entre 0 y 180 grados. El compilador genera control PWM para MicroPython y usa la biblioteca `Servo` de Arduino para el destino Arduino Mega.
+
+### Máquina expendedora
+
+El programa completo está en [examples/maquina_bebidas.luma](./examples/maquina_bebidas.luma). Es una versión de la máquina de bebidas con estados explícitos: bienvenida, ingreso de dinero, selección, dispensado, confirmación de retiro, vuelto y despedida. Usa seis botones activos en bajo, LCD 16×2, cuatro LEDs de selección, un LED de reposo y un servo.
+
+Para replicar el circuito en Arduino Mega:
+
+- LCD: RS 12, E 11, D4–D7 en 5, 4, 3, 2.
+- Servo: señal en el pin 10.
+- LEDs de bebidas: pines 6–9; indicador de reposo: pin 13.
+- Botones Coca-Cola, Pepsi, 7 Up, Mountain Dew, ingreso de dinero y retiro: A0–A5, equivalentes a pines digitales 54–59 en Mega.
+
+La traducción corrige dos problemas del original: el indicador del pin 13 es una salida y el estado de selección espera a que se presione un botón de bebida. Cada bebida cuesta Q5.00; al ingresar Q10.00 muestra Q5.00 de vuelto después de confirmar el retiro. Usa resistencias para los LEDs, alimenta el servo adecuadamente y comparte GND.
 
 ## Destinos y pines
 
@@ -189,6 +257,7 @@ Compila un archivo `.luma` desde la terminal:
 ```powershell
 python -m luma examples\parpadeo.luma
 python -m luma examples\servo_door.luma --target arduino
+python -m luma examples\maquina_bebidas.luma --target arduino
 python -m luma examples\parpadeo.luma --target xtensa
 ```
 
@@ -197,6 +266,7 @@ El destino predeterminado es `micropython`. También puedes guardar la salida co
 ```powershell
 python -m luma examples\parpadeo.luma --output parpadeo.py
 python -m luma examples\servo_door.luma --target arduino --output sketch.ino
+python -m luma examples\parpadeo.luma --target xtensa --output parpadeo_xtensa.S
 ```
 
 En Windows, abre la interfaz con `luma-gui` o `python -m luma --gui`. Abre un archivo `.luma` y pulsa **Compilar**. El selector **Destino Wokwi** elige la placa para la validación y la pestaña de salida correspondiente.
@@ -207,6 +277,7 @@ Para exportar a una carpeta local de Wokwi, el proyecto debe contener `diagram.j
 
 ```powershell
 python -m luma examples\switch_display.luma --target micropython --wokwi-dir "C:\ruta\al\proyecto" --force
+python -m luma examples\maquina_bebidas.luma --target arduino --wokwi-dir "C:\ruta\al\proyecto" --force
 python -m luma examples\servo_door.luma --target arduino --wokwi-dir "C:\ruta\al\proyecto" --force
 ```
 
@@ -214,12 +285,14 @@ El primer comando escribe `main.py`; el segundo escribe `sketch.ino`. `--force` 
 
 También puedes usar **Enviar a Wokwi** en la interfaz para reemplazar el editor de una simulación abierta en Google Chrome. Selecciona el destino correcto y asegúrate de tener abierto el proyecto y archivo adecuados: `main.py` para MicroPython o `sketch.ino` para Arduino Mega. La salida Xtensa es un módulo de ensamblador con llamadas a rutinas de hardware externas; no es un firmware ejecutable por sí solo ni se envía con **Ejecutar en ESP32**.
 
+El botón **Guardar Xtensa .S** guarda la salida de ensamblador localmente. Para la máquina expendedora, usa **Arduino Mega** y envía el sketch generado a `sketch.ino`; el `.S` es solo una referencia del backend Xtensa, no corresponde al pinout Mega ni se puede ejecutar en Wokwi.
+
 ## Errores comunes
 
 - **Falta `INICIAR`, `FINALIZAR` o un cierre:** cada bloque debe tener su palabra de cierre correspondiente.
 - **Instrucciones en la misma línea:** separa cada instrucción con un salto de línea.
-- **Variable sin valor:** ejecuta `LEER_BINARIO ... COMO variable` antes de comparar o mostrar esa variable.
-- **Nombre de dispositivo no declarado:** declara el grupo con `BOTONES`, el display con `DISPLAY7` o el servo con `SERVOMOTOR` antes de usarlo.
+- **Variable sin valor:** asígnala con `ASIGNAR`, `LEER_BINARIO` o `LEER_BOTON` antes de compararla.
+- **Nombre de dispositivo no declarado:** declara el grupo o dispositivo con `BOTONES`, `BOTON`, `DISPLAY7`, `LCD16X2` o `SERVOMOTOR` antes de usarlo.
 - **Pin ocupado o no disponible:** verifica el destino elegido y evita compartir el pin entre dispositivos.
 - **Entrada que cambia sola:** en Arduino, las entradas `BOTONES` sin `ACTIVO_BAJO` necesitan resistencias externas; en ESP32 se usa `PULL_DOWN` por defecto.
 - **La simulación no coincide con la placa:** selecciona `Arduino Mega` para `sketch.ino` y `MicroPython` para `main.py`.

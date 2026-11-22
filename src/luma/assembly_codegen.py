@@ -3,17 +3,24 @@
 from typing import TypeVar
 
 from .ast import (
+    AssignmentStatement,
     ButtonDeclaration,
     ClearDisplayStatement,
     Display7Declaration,
     ForeverStatement,
     IfStatement,
     LedStatement,
+    Lcd16x2Declaration,
+    LcdClearStatement,
+    LcdCursorStatement,
+    LcdWriteStatement,
     Program,
     ReadBinaryStatement,
+    ReadButtonStatement,
     RepeatStatement,
     ServoDeclaration,
     ServoMoveStatement,
+    SingleButtonDeclaration,
     ShowDigitStatement,
     Statement,
     WaitStatement,
@@ -28,8 +35,14 @@ class XtensaAssemblyCodeGenerator:
     def generate(self, program: Program) -> str:
         self._next_label = 0
         self._buttons = self._find_declarations(program.body, ButtonDeclaration)
+        self._single_buttons = self._find_declarations(program.body, SingleButtonDeclaration)
         self._displays = self._find_declarations(program.body, Display7Declaration)
+        self._lcds = self._find_declarations(program.body, Lcd16x2Declaration)
         self._servos = self._find_declarations(program.body, ServoDeclaration)
+        self._lcd_writes = self._find_statements(program.body, LcdWriteStatement)
+        self._lcd_string_indexes = {
+            statement: index for index, statement in enumerate(self._lcd_writes)
+        }
         self._servo_pins = {declaration.name: declaration.pin for declaration in self._servos}
         self._variables = self._collect_variables(program.body)
         repeat_slots = self._max_repeat_depth(program.body)
@@ -47,8 +60,14 @@ class XtensaAssemblyCodeGenerator:
             ".extern luma_buttons_setup",
             ".extern luma_display_setup",
             ".extern luma_read_buttons",
+            ".extern luma_button_setup",
+            ".extern luma_button_read",
             ".extern luma_display_show",
             ".extern luma_display_clear",
+            ".extern luma_lcd_setup",
+            ".extern luma_lcd_clear",
+            ".extern luma_lcd_cursor",
+            ".extern luma_lcd_write",
             ".extern luma_servo_setup",
             ".extern luma_servo_set_angle",
             "# Hardware hooks use a2 and subsequent ABI argument registers.",
@@ -63,11 +82,22 @@ class XtensaAssemblyCodeGenerator:
                     "    call0 luma_buttons_setup",
                 ]
             )
+        for declaration in self._single_buttons:
+            self._emit_constant(lines, "a2", declaration.pin, "    ")
+            self._emit_constant(lines, "a3", int(declaration.active_low), "    ")
+            lines.append("    call0 luma_button_setup")
         for declaration in self._displays:
             lines.extend(
                 [
                     f"    l32r a2, .Ldisplay_ptr_{declaration.name}",
                     "    call0 luma_display_setup",
+                ]
+            )
+        for declaration in self._lcds:
+            lines.extend(
+                [
+                    f"    l32r a2, .Llcd_ptr_{declaration.name}",
+                    "    call0 luma_lcd_setup",
                 ]
             )
         for declaration in self._servos:
@@ -94,6 +124,11 @@ class XtensaAssemblyCodeGenerator:
                 self._emit_constant(lines, "a2", statement.pin, indent)
                 self._emit_constant(lines, "a3", int(statement.enabled), indent)
                 lines.append(f"{indent}call0 luma_led_write")
+            elif isinstance(statement, AssignmentStatement):
+                self._emit_constant(lines, "a4", statement.value, indent)
+                lines.append(
+                    f"{indent}s32i a4, a1, {self._variable_offsets[statement.variable]}"
+                )
             elif isinstance(statement, WaitStatement):
                 self._emit_constant(lines, "a2", statement.milliseconds, indent)
                 lines.append(f"{indent}call0 luma_wait_ms")
@@ -101,9 +136,46 @@ class XtensaAssemblyCodeGenerator:
                 self._emit_constant(lines, "a2", self._servo_pins[statement.servo_name], indent)
                 self._emit_constant(lines, "a3", statement.angle, indent)
                 lines.append(f"{indent}call0 luma_servo_set_angle")
+            elif isinstance(statement, ReadButtonStatement):
+                declaration = next(
+                    button for button in self._single_buttons if button.name == statement.button_name
+                )
+                self._emit_constant(lines, "a2", declaration.pin, indent)
+                self._emit_constant(lines, "a3", int(declaration.active_low), indent)
+                lines.extend(
+                    [
+                        f"{indent}call0 luma_button_read",
+                        f"{indent}s32i a2, a1, {self._variable_offsets[statement.variable]}",
+                    ]
+                )
+            elif isinstance(statement, LcdClearStatement):
+                lines.extend(
+                    [
+                        f"{indent}l32r a2, .Llcd_ptr_{statement.lcd_name}",
+                        f"{indent}call0 luma_lcd_clear",
+                    ]
+                )
+            elif isinstance(statement, LcdCursorStatement):
+                lines.append(f"{indent}l32r a2, .Llcd_ptr_{statement.lcd_name}")
+                self._emit_constant(lines, "a3", statement.column, indent)
+                self._emit_constant(lines, "a4", statement.row, indent)
+                lines.append(f"{indent}call0 luma_lcd_cursor")
+            elif isinstance(statement, LcdWriteStatement):
+                index = self._lcd_string_indexes[statement]
+                lines.extend(
+                    [
+                        f"{indent}l32r a2, .Llcd_ptr_{statement.lcd_name}",
+                        f"{indent}l32r a3, .Llcd_text_ptr_{index}",
+                        f"{indent}call0 luma_lcd_write",
+                    ]
+                )
             elif isinstance(statement, ButtonDeclaration):
                 continue
+            elif isinstance(statement, SingleButtonDeclaration):
+                continue
             elif isinstance(statement, Display7Declaration):
+                continue
+            elif isinstance(statement, Lcd16x2Declaration):
                 continue
             elif isinstance(statement, ServoDeclaration):
                 continue
@@ -194,6 +266,24 @@ class XtensaAssemblyCodeGenerator:
                     "    .long " + ", ".join(str(pin) for pin in declaration.pins),
                 ]
             )
+        for declaration in self._lcds:
+            lines.extend(
+                [
+                    f".Llcd_ptr_{declaration.name}:",
+                    f"    .long .Llcd_{declaration.name}",
+                    f".Llcd_{declaration.name}:",
+                    "    .long " + ", ".join(str(pin) for pin in declaration.pins),
+                ]
+            )
+        for statement, index in self._lcd_string_indexes.items():
+            lines.extend(
+                [
+                    f".Llcd_text_ptr_{index}:",
+                    f"    .long .Llcd_text_{index}",
+                    f".Llcd_text_{index}:",
+                    f'    .asciz "{self._escape_assembly_string(statement.text)}"',
+                ]
+            )
         return lines
 
     def _stack_adjustment(self, frame_size: int, allocate: bool) -> list[str]:
@@ -221,7 +311,9 @@ class XtensaAssemblyCodeGenerator:
     def _collect_variables(self, statements: tuple[Statement, ...]) -> list[str]:
         variables: list[str] = []
         for statement in statements:
-            if isinstance(statement, ReadBinaryStatement) and statement.variable not in variables:
+            if isinstance(
+                statement, (ReadBinaryStatement, ReadButtonStatement, AssignmentStatement)
+            ) and statement.variable not in variables:
                 variables.append(statement.variable)
             elif isinstance(statement, (RepeatStatement, ForeverStatement)):
                 for name in self._collect_variables(statement.body):
@@ -261,6 +353,24 @@ class XtensaAssemblyCodeGenerator:
                 declarations.extend(self._find_declarations(statement.body, kind))
                 declarations.extend(self._find_declarations(statement.else_body, kind))
         return declarations
+
+    def _find_statements(
+        self, statements: tuple[Statement, ...], kind: type[TStatement]
+    ) -> list[TStatement]:
+        found: list[TStatement] = []
+        for statement in statements:
+            if isinstance(statement, kind):
+                found.append(statement)
+            elif isinstance(statement, (RepeatStatement, ForeverStatement)):
+                found.extend(self._find_statements(statement.body, kind))
+            elif isinstance(statement, IfStatement):
+                found.extend(self._find_statements(statement.body, kind))
+                found.extend(self._find_statements(statement.else_body, kind))
+        return found
+
+    @staticmethod
+    def _escape_assembly_string(text: str) -> str:
+        return text.replace("\\", "\\\\").replace('"', '\\"')
 
     def _new_label(self) -> int:
         label = self._next_label

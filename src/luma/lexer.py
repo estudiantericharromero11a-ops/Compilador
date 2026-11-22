@@ -39,6 +39,35 @@ class Lexer:
                 line += 1
                 column = 1
                 continue
+            if char == '"':
+                index += 1
+                column += 1
+                value: list[str] = []
+                while index < len(source) and source[index] != '"':
+                    current = source[index]
+                    if current in "\r\n":
+                        raise LumaError("Las cadenas de texto no pueden ocupar varias líneas", location)
+                    if current == "\\":
+                        if index + 1 >= len(source) or source[index + 1] not in ('"', "\\"):
+                            raise LumaError("Secuencia de escape no permitida en la cadena", SourceLocation(line, column))
+                        value.append(source[index + 1])
+                        index += 2
+                        column += 2
+                    else:
+                        if not 32 <= ord(current) <= 126:
+                            raise LumaError(
+                                "Las cadenas solo admiten caracteres ASCII imprimibles",
+                                SourceLocation(line, column),
+                            )
+                        value.append(current)
+                        index += 1
+                        column += 1
+                if index >= len(source):
+                    raise LumaError("Falta cerrar la cadena de texto", location)
+                index += 1
+                column += 1
+                tokens.append(Token(TokenKind.STRING, "".join(value), location))
+                continue
             if char == "#":
                 while index < len(source) and source[index] not in "\r\n":
                     index += 1
@@ -70,6 +99,10 @@ class Lexer:
                     tokens.append(Token(TokenKind.OPERATOR, operator, location))
                     index += 2
                     column += 2
+                elif char == "=":
+                    tokens.append(Token(TokenKind.ASSIGNMENT, char, location))
+                    index += 1
+                    column += 1
                 elif char in "<>":
                     tokens.append(Token(TokenKind.OPERATOR, char, location))
                     index += 1

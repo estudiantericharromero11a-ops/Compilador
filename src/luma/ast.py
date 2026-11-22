@@ -40,9 +40,52 @@ class ButtonDeclaration(Statement):
 
 
 @dataclass(frozen=True)
+class SingleButtonDeclaration(Statement):
+    name: str
+    pin: int
+    active_low: bool = False
+
+
+@dataclass(frozen=True)
+class ReadButtonStatement(Statement):
+    button_name: str
+    variable: str
+
+
+@dataclass(frozen=True)
+class AssignmentStatement(Statement):
+    variable: str
+    value: int
+
+
+@dataclass(frozen=True)
 class Display7Declaration(Statement):
     name: str
     pins: tuple[int, int, int, int, int, int, int]
+
+
+@dataclass(frozen=True)
+class Lcd16x2Declaration(Statement):
+    name: str
+    pins: tuple[int, int, int, int, int, int]
+
+
+@dataclass(frozen=True)
+class LcdClearStatement(Statement):
+    lcd_name: str
+
+
+@dataclass(frozen=True)
+class LcdCursorStatement(Statement):
+    lcd_name: str
+    column: int
+    row: int
+
+
+@dataclass(frozen=True)
+class LcdWriteStatement(Statement):
+    lcd_name: str
+    text: str
 
 
 @dataclass(frozen=True)

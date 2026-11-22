@@ -39,6 +39,7 @@ class LumaApp:
         self.current_path: Path | None = None
         self.generated_code: str | None = None
         self.generated_arduino: str | None = None
+        self.generated_assembly: str | None = None
         self._build_ui()
         self._refresh_ports()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -93,6 +94,11 @@ class LumaApp:
         self.editor.insert("1.0", SAMPLE_PROGRAM)
         self.editor.edit_modified(False)
         self.editor.bind("<KeyRelease>", self._highlight)
+        output_tools = ttk.Frame(output_frame)
+        output_tools.pack(fill=tk.X, pady=(0, 4))
+        ttk.Button(
+            output_tools, text="Guardar Xtensa .S", command=self._export_assembly
+        ).pack(side=tk.RIGHT)
         output_tabs = ttk.Notebook(output_frame)
         output_tabs.pack(fill=tk.BOTH, expand=True)
         self.output_tabs = output_tabs
@@ -101,6 +107,7 @@ class LumaApp:
         assembly_frame = ttk.Frame(output_tabs)
         self.micropython_tab = micropython_frame
         self.arduino_tab = arduino_frame
+        self.assembly_tab = assembly_frame
         output_tabs.add(micropython_frame, text="MicroPython")
         output_tabs.add(arduino_frame, text="Arduino Mega")
         output_tabs.add(assembly_frame, text="Ensamblador Xtensa")
@@ -118,6 +125,7 @@ class LumaApp:
         self.assembly_output.pack(fill=tk.BOTH, expand=True)
         self.editor.tag_configure("keyword", foreground="#185abc")
         self.editor.tag_configure("comment", foreground="#718096")
+        self.editor.tag_configure("string", foreground="#0b8043")
 
         log_frame = ttk.Labelframe(self.root, text="Mensajes", padding=5)
         log_frame.pack(fill=tk.X, padx=8, pady=(0, 8))
@@ -129,18 +137,21 @@ class LumaApp:
         source = self.editor.get("1.0", "end-1c")
         self.editor.tag_remove("keyword", "1.0", tk.END)
         self.editor.tag_remove("comment", "1.0", tk.END)
+        self.editor.tag_remove("string", "1.0", tk.END)
         keywords = (
             r"\b(?:INICIAR|FINALIZAR|LED|ENCENDER|APAGAR|ESPERAR|REPETIR|FIN_REPETIR|"
             r"BOTONES|COMO|DISPLAY7|SERVOMOTOR|MOVER|ANGULO|ACTIVO_BAJO|LEER_BINARIO|"
             r"SI|SINO|FIN_SI|MOSTRAR|EN|"
-            r"LIMPIAR|REPETIR_SIEMPRE|FIN_REPETIR_SIEMPRE)\b"
+            r"LIMPIAR|REPETIR_SIEMPRE|FIN_REPETIR_SIEMPRE|BOTON|LEER_BOTON|ASIGNAR|"
+            r"LCD16X2|LIMPIAR_LCD|CURSOR_LCD|ESCRIBIR_LCD)\b"
         )
-        for match in re.finditer(keywords, source, re.IGNORECASE):
+        pattern = re.compile(r'"(?:\\["\\]|[^"\\\r\n])*"|#.*|' + keywords, re.IGNORECASE)
+        for match in pattern.finditer(source):
             start = f"1.0+{match.start()}c"
             end = f"1.0+{match.end()}c"
-            self.editor.tag_add("keyword", start, end)
-        for match in re.finditer(r"#.*", source):
-            self.editor.tag_add("comment", f"1.0+{match.start()}c", f"1.0+{match.end()}c")
+            value = match.group(0)
+            tag = "string" if value.startswith('"') else "comment" if value.startswith("#") else "keyword"
+            self.editor.tag_add(tag, start, end)
 
     def _refresh_ports(self) -> None:
         try:
@@ -190,6 +201,7 @@ class LumaApp:
         except LumaError as error:
             self.generated_code = None
             self.generated_arduino = None
+            self.generated_assembly = None
             self._set_output("")
             self._set_arduino_output("")
             self._set_assembly_output("")
@@ -200,6 +212,7 @@ class LumaApp:
             return False
         self.generated_code = result.generated_code
         self.generated_arduino = result.generated_arduino
+        self.generated_assembly = result.generated_assembly
         self._set_output(result.generated_code)
         self._set_arduino_output(result.generated_arduino)
         self._set_assembly_output(result.generated_assembly)
@@ -214,6 +227,46 @@ class LumaApp:
             "salidas Arduino, MicroPython y ensamblador Xtensa generadas."
         )
         return True
+
+    def _export_assembly(self) -> None:
+        if not self._compile():
+            return
+        assembly = self.generated_assembly
+        if assembly is None:
+            message = "La compilación no produjo salida de ensamblador Xtensa."
+            self._log(message)
+            messagebox.showerror("No se pudo guardar ensamblador", message)
+            return
+        self.output_tabs.select(self.assembly_tab)
+        if self.wokwi_target_var.get() == "Arduino Mega":
+            messagebox.showwarning(
+                "Ensamblador solo de referencia",
+                "La salida Xtensa no corresponde al pinout de Arduino Mega y no se ejecuta en Wokwi. "
+                "Para la máquina expendedora, envía el sketch Arduino a sketch.ino.",
+            )
+        initial_name = (
+            f"{self.current_path.stem}_xtensa.S"
+            if self.current_path is not None
+            else "programa_xtensa.S"
+        )
+        output_path = filedialog.asksaveasfilename(
+            title="Guardar ensamblador Xtensa",
+            defaultextension=".S",
+            initialfile=initial_name,
+            filetypes=[("Ensamblador Xtensa", "*.S"), ("Todos los archivos", "*.*")],
+        )
+        if not output_path:
+            return
+        try:
+            Path(output_path).write_text(assembly, encoding="utf-8")
+        except OSError as error:
+            self._log(f"Error al guardar ensamblador: {error}")
+            messagebox.showerror("No se pudo guardar ensamblador", str(error))
+            return
+        self._log(
+            f"Ensamblador Xtensa exportado a {output_path}. "
+            "La salida requiere un runtime de hardware externo y no se ejecuta en Wokwi."
+        )
 
     def _run(self) -> None:
         if self.transport is None:

@@ -1,0 +1,151 @@
+# Maquina expendedora para Arduino Mega; estados: 0 bienvenida, 1 dinero,
+# 2 seleccion, 3 tomar bebida, 4 esperar confirmacion, 5 vuelto, 6 despedida.
+INICIAR
+
+LCD16X2 12 11 5 4 3 2 COMO pantalla
+BOTON 54 ACTIVO_BAJO COMO btnCocaCola
+BOTON 55 ACTIVO_BAJO COMO btnPepsi
+BOTON 56 ACTIVO_BAJO COMO btn7Up
+BOTON 57 ACTIVO_BAJO COMO btnMountainDew
+BOTON 58 ACTIVO_BAJO COMO btnDinero
+BOTON 59 ACTIVO_BAJO COMO btnTomar
+SERVOMOTOR 10 COMO dispensador
+
+LED 6 APAGAR
+LED 7 APAGAR
+LED 8 APAGAR
+LED 9 APAGAR
+LED 13 APAGAR
+ASIGNAR estado = 0
+
+REPETIR_SIEMPRE
+    SI estado == 0
+        LED 13 ENCENDER
+        LIMPIAR_LCD pantalla
+        ESCRIBIR_LCD pantalla "Bienvenido!"
+        ESPERAR 2000
+        LIMPIAR_LCD pantalla
+        ESCRIBIR_LCD pantalla "Ingrese dinero:"
+        ASIGNAR estado = 1
+    SINO
+        SI estado == 1
+            LEER_BOTON btnDinero COMO dineroIngresado
+            SI dineroIngresado == 1
+                ESPERAR 1000
+                LIMPIAR_LCD pantalla
+                ESCRIBIR_LCD pantalla "Cantidad: Q10.00"
+                ESPERAR 2000
+                LED 13 APAGAR
+                LIMPIAR_LCD pantalla
+                ESCRIBIR_LCD pantalla "Seleccione su"
+                CURSOR_LCD pantalla 0 1
+                ESCRIBIR_LCD pantalla "bebida:"
+                ASIGNAR estado = 2
+            FIN_SI
+        SINO
+            SI estado == 2
+                LEER_BOTON btnCocaCola COMO cocaPresionada
+                SI cocaPresionada == 1
+                    LIMPIAR_LCD pantalla
+                    ESCRIBIR_LCD pantalla "Dispensando..."
+                    LED 6 ENCENDER
+                    MOVER dispensador ANGULO 0
+                    ESPERAR 2000
+                    MOVER dispensador ANGULO 180
+                    LIMPIAR_LCD pantalla
+                    ESCRIBIR_LCD pantalla "Coca Cola"
+                    CURSOR_LCD pantalla 0 1
+                    ESCRIBIR_LCD pantalla "Dispensada"
+                    ESPERAR 2000
+                    ASIGNAR estado = 3
+                SINO
+                    LEER_BOTON btnPepsi COMO pepsiPresionada
+                    SI pepsiPresionada == 1
+                        LIMPIAR_LCD pantalla
+                        ESCRIBIR_LCD pantalla "Dispensando..."
+                        LED 7 ENCENDER
+                        MOVER dispensador ANGULO 0
+                        ESPERAR 2000
+                        MOVER dispensador ANGULO 180
+                        LIMPIAR_LCD pantalla
+                        ESCRIBIR_LCD pantalla "Pepsi"
+                        CURSOR_LCD pantalla 0 1
+                        ESCRIBIR_LCD pantalla "Dispensada"
+                        ESPERAR 2000
+                        ASIGNAR estado = 3
+                    SINO
+                        LEER_BOTON btn7Up COMO upPresionada
+                        SI upPresionada == 1
+                            LIMPIAR_LCD pantalla
+                            ESCRIBIR_LCD pantalla "Dispensando..."
+                            LED 8 ENCENDER
+                            MOVER dispensador ANGULO 0
+                            ESPERAR 2000
+                            MOVER dispensador ANGULO 180
+                            LIMPIAR_LCD pantalla
+                            ESCRIBIR_LCD pantalla "7 Up"
+                            CURSOR_LCD pantalla 0 1
+                            ESCRIBIR_LCD pantalla "Dispensada"
+                            ESPERAR 2000
+                            ASIGNAR estado = 3
+                        SINO
+                            LEER_BOTON btnMountainDew COMO dewPresionada
+                            SI dewPresionada == 1
+                                LIMPIAR_LCD pantalla
+                                ESCRIBIR_LCD pantalla "Dispensando..."
+                                LED 9 ENCENDER
+                                MOVER dispensador ANGULO 0
+                                ESPERAR 2000
+                                MOVER dispensador ANGULO 180
+                                LIMPIAR_LCD pantalla
+                                ESCRIBIR_LCD pantalla "Mountain Dew"
+                                CURSOR_LCD pantalla 0 1
+                                ESCRIBIR_LCD pantalla "Dispensada"
+                                ESPERAR 2000
+                                ASIGNAR estado = 3
+                            FIN_SI
+                        FIN_SI
+                    FIN_SI
+                FIN_SI
+            SINO
+                SI estado == 3
+                    LIMPIAR_LCD pantalla
+                    ESCRIBIR_LCD pantalla "Tome su"
+                    CURSOR_LCD pantalla 0 1
+                    ESCRIBIR_LCD pantalla "bebida"
+                    ESPERAR 1000
+                    ASIGNAR estado = 4
+                SINO
+                    SI estado == 4
+                        LEER_BOTON btnTomar COMO bebidaTomada
+                        SI bebidaTomada == 1
+                            ASIGNAR estado = 5
+                        FIN_SI
+                    SINO
+                        SI estado == 5
+                            LIMPIAR_LCD pantalla
+                            ESCRIBIR_LCD pantalla "Vuelto: Q5.00"
+                            ESPERAR 3000
+                            ASIGNAR estado = 6
+                        SINO
+                            LIMPIAR_LCD pantalla
+                            ESCRIBIR_LCD pantalla "Gracias por"
+                            CURSOR_LCD pantalla 0 1
+                            ESCRIBIR_LCD pantalla "preferirnos!"
+                            LED 6 APAGAR
+                            LED 7 APAGAR
+                            LED 8 APAGAR
+                            LED 9 APAGAR
+                            LED 13 ENCENDER
+                            ESPERAR 5000
+                            ASIGNAR estado = 0
+                        FIN_SI
+                    FIN_SI
+                FIN_SI
+            FIN_SI
+        FIN_SI
+    FIN_SI
+    ESPERAR 20
+FIN_REPETIR_SIEMPRE
+
+FINALIZAR

@@ -56,6 +56,15 @@ class LexerTests(unittest.TestCase):
         with self.assertRaisesRegex(LumaError, "Carácter no permitido"):
             Lexer("INICIAR\nLED 2 @").tokenize()
 
+    def test_scans_lcd_strings_with_comments_and_escaped_quotes(self):
+        tokens = Lexer('ESCRIBIR_LCD pantalla "A # \\"B\\"" # comment').tokenize()
+        string = next(token for token in tokens if token.kind is TokenKind.STRING)
+        self.assertEqual(string.lexeme, 'A # "B"')
+
+    def test_rejects_non_ascii_lcd_text(self):
+        with self.assertRaisesRegex(LumaError, "ASCII imprimibles"):
+            Lexer('ESCRIBIR_LCD pantalla "Bebida ñ"').tokenize()
+
 
 class ParserTests(unittest.TestCase):
     def test_builds_nested_program_ast(self):
@@ -123,6 +132,26 @@ class SemanticTests(unittest.TestCase):
         with self.assertRaisesRegex(LumaError, "Arduino Mega"):
             compile_source("INICIAR\nLED 70 ENCENDER\nFINALIZAR", board="arduino-mega")
 
+    def test_rejects_conflicting_button_and_lcd_pins(self):
+        source = (
+            "INICIAR\n"
+            "LCD16X2 12 11 5 4 3 2 COMO pantalla\n"
+            "BOTON 12 ACTIVO_BAJO COMO tecla\n"
+            "FINALIZAR\n"
+        )
+        with self.assertRaisesRegex(LumaError, "ya está ocupado"):
+            compile_source(source, board="arduino-mega")
+
+    def test_validates_lcd_cursor_position(self):
+        source = (
+            "INICIAR\n"
+            "LCD16X2 12 11 5 4 3 2 COMO pantalla\n"
+            "CURSOR_LCD pantalla 0 2\n"
+            "FINALIZAR\n"
+        )
+        with self.assertRaisesRegex(LumaError, "fila.*0 o 1"):
+            compile_source(source, board="arduino-mega")
+
 
 class CodeGenerationTests(unittest.TestCase):
     def test_compiles_led_presentation_example(self):
@@ -156,6 +185,32 @@ class CodeGenerationTests(unittest.TestCase):
         self.assertIn(".extern luma_servo_set_angle", result.generated_assembly)
         self.assertIn("call0 luma_servo_setup", result.generated_assembly)
         self.assertIn("call0 luma_servo_set_angle", result.generated_assembly)
+
+    def test_compiles_vending_machine_for_all_backends(self):
+        source = Path("examples/maquina_bebidas.luma").read_text(encoding="utf-8")
+        result = compile_source(source, board="arduino-mega")
+
+        compile(result.generated_code, "<generated MicroPython>", "exec")
+        self.assertIn("class LumaLCD16x2:", result.generated_code)
+        self.assertIn("luma_button_btnCocaCola = Pin(54, Pin.IN, Pin.PULL_UP)", result.generated_code)
+        self.assertIn("luma_lcd_pantalla.write('Bienvenido!')", result.generated_code)
+
+        self.assertIn("#include <LiquidCrystal.h>", result.generated_arduino)
+        self.assertIn("LiquidCrystal luma_lcd_pantalla(12, 11, 5, 4, 3, 2);", result.generated_arduino)
+        self.assertIn("luma_lcd_pantalla.begin(16, 2);", result.generated_arduino)
+        self.assertIn("pinMode(13, OUTPUT);", result.generated_arduino)
+        self.assertIn("pinMode(58, INPUT_PULLUP);", result.generated_arduino)
+        self.assertIn('luma_lcd_pantalla.print("Mountain Dew");', result.generated_arduino)
+        self.assertIn("luma_value_estado = 0;", result.generated_arduino)
+
+        self.assertIn(".extern luma_lcd_write", result.generated_assembly)
+        self.assertIn("call0 luma_button_read", result.generated_assembly)
+        self.assertIn('    .asciz "Bienvenido!"', result.generated_assembly)
+        with TemporaryDirectory() as project_dir:
+            directory = Path(project_dir)
+            (directory / "diagram.json").write_text("{}", encoding="utf-8")
+            sketch = write_wokwi_sketch(result.generated_arduino, directory)
+            self.assertIn("#include <LiquidCrystal.h>", sketch.read_text(encoding="utf-8"))
 
     def test_generates_micro_python_with_pin_setup_and_loop(self):
         code = compile_source(SAMPLE).generated_code

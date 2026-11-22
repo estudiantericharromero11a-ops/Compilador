@@ -31,9 +31,18 @@ class TokenKind(Enum):
     CLEAR = auto()
     FOREVER = auto()
     END_FOREVER = auto()
+    BUTTON = auto()
+    READ_BUTTON = auto()
+    ASSIGN = auto()
+    LCD16X2 = auto()
+    LCD_CLEAR = auto()
+    LCD_CURSOR = auto()
+    LCD_WRITE = auto()
     NUMBER = auto()
+    STRING = auto()
     IDENTIFIER = auto()
     OPERATOR = auto()
+    ASSIGNMENT = auto()
     EOL = auto()
     EOF = auto()
 
@@ -63,6 +72,13 @@ KEYWORDS = {
     "LIMPIAR": TokenKind.CLEAR,
     "REPETIR_SIEMPRE": TokenKind.FOREVER,
     "FIN_REPETIR_SIEMPRE": TokenKind.END_FOREVER,
+    "BOTON": TokenKind.BUTTON,
+    "LEER_BOTON": TokenKind.READ_BUTTON,
+    "ASIGNAR": TokenKind.ASSIGN,
+    "LCD16X2": TokenKind.LCD16X2,
+    "LIMPIAR_LCD": TokenKind.LCD_CLEAR,
+    "CURSOR_LCD": TokenKind.LCD_CURSOR,
+    "ESCRIBIR_LCD": TokenKind.LCD_WRITE,
 }
 
 

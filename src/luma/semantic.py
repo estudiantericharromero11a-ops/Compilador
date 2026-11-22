@@ -3,17 +3,24 @@
 from typing import Literal
 
 from .ast import (
+    AssignmentStatement,
     ButtonDeclaration,
     ClearDisplayStatement,
     Display7Declaration,
     ForeverStatement,
     IfStatement,
     LedStatement,
+    Lcd16x2Declaration,
+    LcdClearStatement,
+    LcdCursorStatement,
+    LcdWriteStatement,
     Program,
     ReadBinaryStatement,
+    ReadButtonStatement,
     RepeatStatement,
     ServoDeclaration,
     ServoMoveStatement,
+    SingleButtonDeclaration,
     ShowDigitStatement,
     Statement,
     WaitStatement,
@@ -50,12 +57,26 @@ class SemanticAnalyzer:
                 self._validate_pins(
                     statement.pins, self.INPUT_GPIO, "entrada", statement, f"BOTONES {statement.name}"
                 )
+            elif isinstance(statement, SingleButtonDeclaration):
+                if nested:
+                    self._error("BOTON debe declararse fuera de los bloques", statement)
+                self._declare_name(statement.name, "button", statement)
+                self._validate_pins(
+                    (statement.pin,), self.INPUT_GPIO, "entrada", statement, f"BOTON {statement.name}"
+                )
             elif isinstance(statement, Display7Declaration):
                 if nested:
                     self._error("DISPLAY7 debe declararse fuera de los bloques", statement)
                 self._declare_name(statement.name, "display", statement)
                 self._validate_pins(
                     statement.pins, self.OUTPUT_GPIO, "salida", statement, f"DISPLAY7 {statement.name}"
+                )
+            elif isinstance(statement, Lcd16x2Declaration):
+                if nested:
+                    self._error("LCD16X2 debe declararse fuera de los bloques", statement)
+                self._declare_name(statement.name, "lcd", statement)
+                self._validate_pins(
+                    statement.pins, self.OUTPUT_GPIO, "salida", statement, f"LCD16X2 {statement.name}"
                 )
             elif isinstance(statement, ServoDeclaration):
                 if nested:
@@ -83,6 +104,13 @@ class SemanticAnalyzer:
             elif isinstance(statement, ReadBinaryStatement):
                 self._require_name(statement.button_name, "buttons", statement)
                 self._variables.add(statement.variable)
+            elif isinstance(statement, ReadButtonStatement):
+                self._require_name(statement.button_name, "button", statement)
+                self._variables.add(statement.variable)
+            elif isinstance(statement, AssignmentStatement):
+                if not 0 <= statement.value <= 65_535:
+                    self._error("ASIGNAR admite valores entre 0 y 65535", statement)
+                self._variables.add(statement.variable)
             elif isinstance(statement, ServoMoveStatement):
                 self._require_name(statement.servo_name, "servo", statement)
                 if not 0 <= statement.angle <= 180:
@@ -92,6 +120,14 @@ class SemanticAnalyzer:
                 self._require_variable(statement.variable, statement)
             elif isinstance(statement, ClearDisplayStatement):
                 self._require_name(statement.display_name, "display", statement)
+            elif isinstance(statement, (LcdClearStatement, LcdWriteStatement)):
+                self._require_name(statement.lcd_name, "lcd", statement)
+            elif isinstance(statement, LcdCursorStatement):
+                self._require_name(statement.lcd_name, "lcd", statement)
+                if not 0 <= statement.column <= 15:
+                    self._error("La columna de CURSOR_LCD debe estar entre 0 y 15", statement)
+                if statement.row not in (0, 1):
+                    self._error("La fila de CURSOR_LCD debe ser 0 o 1", statement)
             elif isinstance(statement, IfStatement):
                 self._require_variable(statement.variable, statement)
                 if statement.operator not in ("<", "<=", ">", ">=", "==", "!="):
@@ -112,7 +148,13 @@ class SemanticAnalyzer:
 
     def _require_name(self, name: str, kind: str, statement: Statement) -> None:
         if self._names.get(name) != kind:
-            expected = {"buttons": "BOTONES", "display": "DISPLAY7", "servo": "SERVOMOTOR"}[kind]
+            expected = {
+                "buttons": "BOTONES",
+                "button": "BOTON",
+                "display": "DISPLAY7",
+                "lcd": "LCD16X2",
+                "servo": "SERVOMOTOR",
+            }[kind]
             self._error(f"{name!r} no está declarado como {expected}", statement)
 
     def _require_variable(self, name: str, statement: Statement) -> None:

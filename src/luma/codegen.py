@@ -3,17 +3,24 @@
 from typing import TypeVar
 
 from .ast import (
+    AssignmentStatement,
     ButtonDeclaration,
     ClearDisplayStatement,
     Display7Declaration,
     ForeverStatement,
     IfStatement,
     LedStatement,
+    Lcd16x2Declaration,
+    LcdClearStatement,
+    LcdCursorStatement,
+    LcdWriteStatement,
     Program,
     ReadBinaryStatement,
+    ReadButtonStatement,
     RepeatStatement,
     ServoDeclaration,
     ServoMoveStatement,
+    SingleButtonDeclaration,
     ShowDigitStatement,
     Statement,
     WaitStatement,
@@ -39,20 +46,33 @@ class MicroPythonCodeGenerator:
 
     def generate(self, program: Program) -> str:
         button_declarations = self._find_declarations(program.body, ButtonDeclaration)
+        single_button_declarations = self._find_declarations(program.body, SingleButtonDeclaration)
         display_declarations = self._find_declarations(program.body, Display7Declaration)
+        lcd_declarations = self._find_declarations(program.body, Lcd16x2Declaration)
         servo_declarations = self._find_declarations(program.body, ServoDeclaration)
         pins = self._collect_led_pins(program.body)
         pin_import = "from machine import Pin, PWM" if servo_declarations else "from machine import Pin"
-        lines = [pin_import, "from time import sleep_ms", ""]
+        time_import = "from time import sleep_ms, sleep_us" if lcd_declarations else "from time import sleep_ms"
+        lines = [pin_import, time_import, ""]
+        if lcd_declarations:
+            self._emit_lcd_helpers(lines)
         for declaration in button_declarations:
             pull = "Pin.PULL_UP" if declaration.active_low else "Pin.PULL_DOWN"
             inputs = ", ".join(
                 f"Pin({pin}, Pin.IN, {pull})" for pin in declaration.pins
             )
             lines.append(f"luma_buttons_{declaration.name} = ({inputs},)")
+        for declaration in single_button_declarations:
+            pull = "Pin.PULL_UP" if declaration.active_low else "Pin.PULL_DOWN"
+            lines.append(
+                f"luma_button_{declaration.name} = Pin({declaration.pin}, Pin.IN, {pull})"
+            )
         for declaration in display_declarations:
             outputs = ", ".join(f"Pin({pin}, Pin.OUT)" for pin in declaration.pins)
             lines.append(f"luma_display_{declaration.name} = ({outputs},)")
+        for declaration in lcd_declarations:
+            lcd_pins = ", ".join(str(pin) for pin in declaration.pins)
+            lines.append(f"luma_lcd_{declaration.name} = LumaLCD16x2({lcd_pins})")
         for declaration in servo_declarations:
             lines.append(f"luma_servo_{declaration.name} = PWM(Pin({declaration.pin}), freq=50)")
         for pin in pins:
@@ -64,8 +84,63 @@ class MicroPythonCodeGenerator:
         if display_declarations:
             self._emit_display_helpers(lines)
         button_polarities = {declaration.name: declaration.active_low for declaration in button_declarations}
+        button_polarities.update(
+            (declaration.name, declaration.active_low) for declaration in single_button_declarations
+        )
         self._emit_statements(program.body, lines, 0, button_polarities)
         return "\n".join(lines).rstrip() + "\n"
+
+    def _emit_lcd_helpers(self, lines: list[str]) -> None:
+        lines.extend(
+            [
+                "class LumaLCD16x2:",
+                "    def __init__(self, rs, en, d4, d5, d6, d7):",
+                "        self.rs = Pin(rs, Pin.OUT)",
+                "        self.en = Pin(en, Pin.OUT)",
+                "        self.data = (Pin(d4, Pin.OUT), Pin(d5, Pin.OUT), Pin(d6, Pin.OUT), Pin(d7, Pin.OUT))",
+                "        self.en.value(0)",
+                "        sleep_ms(20)",
+                "        self.rs.value(0)",
+                "        self._write4(3)",
+                "        sleep_ms(5)",
+                "        self._write4(3)",
+                "        sleep_us(150)",
+                "        self._write4(3)",
+                "        self._write4(2)",
+                "        self._command(0x28)",
+                "        self._command(0x0C)",
+                "        self._command(0x06)",
+                "        self.clear()",
+                "",
+                "    def _write4(self, value):",
+                "        for bit, pin in enumerate(self.data):",
+                "            pin.value((value >> bit) & 1)",
+                "        self.en.value(1)",
+                "        sleep_us(1)",
+                "        self.en.value(0)",
+                "        sleep_us(50)",
+                "",
+                "    def _send(self, value, mode):",
+                "        self.rs.value(mode)",
+                "        self._write4(value >> 4)",
+                "        self._write4(value & 0x0F)",
+                "",
+                "    def _command(self, value):",
+                "        self._send(value, 0)",
+                "",
+                "    def clear(self):",
+                "        self._command(0x01)",
+                "        sleep_ms(2)",
+                "",
+                "    def cursor(self, column, row):",
+                "        self._command(0x80 + column + (0x40 if row else 0))",
+                "",
+                "    def write(self, text):",
+                "        for character in text:",
+                "            self._send(ord(character), 1)",
+                "",
+            ]
+        )
 
     def _emit_servo_helpers(self, lines: list[str]) -> None:
         lines.extend(
@@ -110,9 +185,29 @@ class MicroPythonCodeGenerator:
             if isinstance(statement, LedStatement):
                 value = 1 if statement.enabled else 0
                 lines.append(f"{indent}luma_pin_{statement.pin}.value({value})")
+            elif isinstance(statement, AssignmentStatement):
+                lines.append(f"{indent}luma_value_{statement.variable} = {statement.value}")
             elif isinstance(statement, ServoMoveStatement):
                 lines.append(
                     f"{indent}luma_servo_set_angle(luma_servo_{statement.servo_name}, {statement.angle})"
+                )
+            elif isinstance(statement, ReadButtonStatement):
+                button = f"luma_button_{statement.button_name}"
+                value = (
+                    f"(1 - {button}.value())"
+                    if button_polarities[statement.button_name]
+                    else f"{button}.value()"
+                )
+                lines.append(f"{indent}luma_value_{statement.variable} = {value}")
+            elif isinstance(statement, LcdClearStatement):
+                lines.append(f"{indent}luma_lcd_{statement.lcd_name}.clear()")
+            elif isinstance(statement, LcdCursorStatement):
+                lines.append(
+                    f"{indent}luma_lcd_{statement.lcd_name}.cursor({statement.column}, {statement.row})"
+                )
+            elif isinstance(statement, LcdWriteStatement):
+                lines.append(
+                    f"{indent}luma_lcd_{statement.lcd_name}.write({statement.text!r})"
                 )
             elif isinstance(statement, WaitStatement):
                 lines.append(f"{indent}sleep_ms({statement.milliseconds})")
